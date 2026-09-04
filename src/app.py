@@ -25,6 +25,7 @@ OUT = ROOT / "outputs"
 sys.path.insert(0, str(SRC))
 from normalize import MIN_ATTRS, VETO_ATTRS  # noqa: E402
 from pipeline import run_pipeline, REQUIRED_COLS  # noqa: E402
+from ui_widgets import confidence_ring, preflight_report  # noqa: E402
 
 st.set_page_config(page_title="UnifyMat · National Material Master",
                    layout="wide", initial_sidebar_state="expanded")
@@ -346,10 +347,19 @@ with st.sidebar:
     if up is not None:
         try:
             df = pd.read_csv(up)
+            # pre-flight card is recomputed only for a new upload (or new CPSE
+            # label) so the officer can dismiss it; file_id identifies the file.
+            fid = getattr(up, "file_id", None) or (up.name, up.size)
+            preflight_key = (fid, cpse_name)
+            if st.session_state.get("preflight_key") != preflight_key:
+                st.session_state.preflight_html = preflight_report(df, cpse_name)
+                st.session_state.preflight_key = preflight_key
             df.columns = [str(c).strip().lower() for c in df.columns]
             missing = [c for c in REQUIRED_COLS if c not in df.columns]
             if missing:
                 st.error("Missing required column(s): " + ", ".join(missing))
+                if st.session_state.get("preflight_html"):
+                    st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
             else:
                 st.success(f"Valid file — {len(df)} records ready to ingest.")
                 if st.button("Ingest file", type="primary", use_container_width=True):
@@ -383,8 +393,8 @@ st.markdown(
     'Ministry of Petroleum &amp; Natural Gas · CPCL</div></div>',
     unsafe_allow_html=True)
 
-tab_over, tab_review, tab_lookup, tab_audit = st.tabs(
-    ["Overview", "Review Queue", "Code Lookup", "Audit Trail"])
+tab_over, tab_review, tab_lookup, tab_master, tab_audit = st.tabs(
+    ["Overview", "Review Queue", "Code Lookup", "Master Catalog", "Audit Trail"])
 
 # ---------------------------------------------------------------- Overview
 with tab_over:
@@ -442,6 +452,14 @@ with tab_over:
                            file_name="code_mapping.csv", mime="text/csv",
                            use_container_width=True)
     st.caption("Also written to outputs/ by every pipeline run.")
+
+    # pre-flight report for the most recent sidebar upload (dismissable)
+    if st.session_state.get("preflight_html"):
+        st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
+        if st.button("Dismiss", key="preflight_dismiss", type="tertiary",
+                     help="Hide this pre-flight report; the next upload shows a fresh one."):
+            st.session_state.pop("preflight_html", None)
+            st.rerun()
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.markdown("<h3 class='section'>Material landscape</h3>", unsafe_allow_html=True)
@@ -514,6 +532,14 @@ with tab_review:
                       .hide(axis="index"))
             st.dataframe(styled, hide_index=True, use_container_width=True,
                          height=min(38 + 35 * len(cands), 150))
+            if len(cands):  # confidence ring per candidate (same order, max 5)
+                ring_html = " ".join(
+                    f'<span style="display:inline-flex;align-items:center;gap:4px;'
+                    f'margin-right:14px;white-space:nowrap;">'
+                    f'{confidence_ring(float(c)) if str(c) not in ("", "nan") else confidence_ring(float("nan"))}'
+                    f'<span style="font-size:11px;color:#475569;font-family:\'Fira Code\',monospace;">{html.escape(str(k))}</span></span>'
+                    for k, c in list(zip(cands["candidate"], cands["score"]))[:5])
+                st.markdown(f'<div style="margin-top:2px;">{ring_html}</div>', unsafe_allow_html=True)
             if rec is not None and len(cands):
                 head = str(cands.iloc[0]["candidate"])
                 if "/" in head:
@@ -610,8 +636,11 @@ with tab_lookup:
                     pass
                 shared_dots = " ".join(cpse_dot(c.strip())
                                        for c in str(mrow["cpses_sharing"]).split(",") if c.strip())
+                conf = mrow.get("confidence")
+                conf_ring = (f'<span style="margin-left:8px;vertical-align:middle;">'
+                             f'{confidence_ring(conf)}</span>' if conf not in ("", None) else "")
                 st.markdown(
-                    f'<div class="result"><span class="nmc">{nmc}</span>{status_chip(mrow["status"])}'
+                    f'<div class="result"><span class="nmc">{nmc}</span>{status_chip(mrow["status"])}{conf_ring}'
                     f'<div class="desc">{mrow["standardized_description"]}</div>'
                     f'<div class="meta">Category: {CAT_PRETTY.get(mrow["category"], mrow["category"])}'
                     f' · Standard UOM: {mrow["uom"]} · Shared by: {shared_dots}'
@@ -630,6 +659,132 @@ with tab_lookup:
                          .hide(axis="index"))
             st.dataframe(eq_styled, hide_index=True, use_container_width=True,
                          height=min(38 + 35 * len(eq), 240))
+
+# ---------------------------------------------------------------- Master Catalog
+with tab_master:
+    st.markdown("<h3 class='section'>The National Material Master — every code, one catalog</h3>",
+                unsafe_allow_html=True)
+    st.caption(f"The unified catalog the harmonization pipeline issues — {len(master):,} national "
+               f"codes over {len(records):,} legacy records from {cpse_count} CPSEs.")
+
+    # ---- KPI row: catalog shape
+    shared_m = [m for m in master if "," in m["cpses_sharing"]]
+    single_m = [m for m in master if m["num_legacy_codes"] == 1]
+    avg_legacy_shared = (sum(m["num_legacy_codes"] for m in shared_m) / len(shared_m)
+                         if shared_m else 0)
+    mk = st.columns(4)
+    with mk[0]:
+        st.markdown(kpi_card("Total national codes", f"{len(master):,}",
+                             f"from {len(records):,} legacy records"), unsafe_allow_html=True)
+    with mk[1]:
+        st.markdown(kpi_card("Shared by 2+ CPSEs", f"{len(shared_m):,}",
+                             "materials unified across CPSEs"), unsafe_allow_html=True)
+    with mk[2]:
+        st.markdown(kpi_card("Singleton codes", f"{len(single_m):,}",
+                             "one CPSE, one legacy code"), unsafe_allow_html=True)
+    with mk[3]:
+        st.markdown(kpi_card("Legacy codes / shared material", f"{avg_legacy_shared:.1f}",
+                             "avg codes merged per shared material", accent=True),
+                    unsafe_allow_html=True)
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    # ---- search + filters (above the table)
+    mq = st.text_input("Search description or NMC", key="master_search",
+                       placeholder="e.g. butterfly valve, HEX BOLT, NMC-FAST-…").strip()
+    m_cats = st.multiselect(
+        "Category", options=sorted({m["category"] for m in master}),
+        format_func=lambda c: CAT_PRETTY.get(c, c),
+        help="Leave empty to include every category.")
+    m_only_shared = st.checkbox("Only shared materials (2+ CPSEs)", value=False)
+    m_only_spread = st.checkbox("Only codes with price spread", value=False)
+
+    def _has_spread(m):
+        try:
+            return (m["max_rate_inr"] not in ("", None) and m["min_rate_inr"] not in ("", None)
+                    and float(m["max_rate_inr"]) != float(m["min_rate_inr"]))
+        except (TypeError, ValueError):
+            return False
+
+    m_rows = master
+    if mq:
+        ql = mq.lower()
+        m_rows = [m for m in m_rows
+                  if ql in str(m["standardized_description"]).lower()
+                  or ql in str(m["national_material_code"]).lower()]
+    if m_cats:
+        m_rows = [m for m in m_rows if m["category"] in m_cats]
+    if m_only_shared:
+        m_rows = [m for m in m_rows if "," in m["cpses_sharing"]]
+    if m_only_spread:
+        m_rows = [m for m in m_rows if _has_spread(m)]
+
+    st.caption(f"Showing {len(m_rows):,} of {len(master):,} codes"
+               + (" · filters active" if (mq or m_cats or m_only_shared or m_only_spread)
+                  else " · unfiltered"))
+
+    # ---- catalog table
+    mdf = pd.DataFrame([{
+        "National Material Code": m["national_material_code"],
+        "Description": m["standardized_description"],
+        "Category": CAT_PRETTY.get(m["category"], m["category"]),
+        "Type": m["material_type"],
+        "Std UOM": m["uom"],
+        "Shared by": m["cpses_sharing"],
+        "# Codes": m["num_legacy_codes"],
+        "Avg ₹": m["avg_rate_inr"],
+        "Min ₹": m["min_rate_inr"],
+        "Max ₹": m["max_rate_inr"],
+        "Confidence": round(float(m["confidence"]), 4),
+        "Status": m["status"]} for m in m_rows])
+
+    if mdf.empty:
+        st.info("No codes match the current search and filters.")
+    else:
+        for col in ("Avg ₹", "Min ₹", "Max ₹"):
+            mdf[col] = pd.to_numeric(mdf[col], errors="coerce").round(2)
+            mdf[col] = mdf[col].where(pd.notna(mdf[col]), "—")
+        m_styled = (mdf.style
+                    .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
+                         subset=["National Material Code"])
+                    .hide(axis="index"))
+        st.dataframe(m_styled, hide_index=True, use_container_width=True,
+                     height=min(38 + 35 * len(mdf), 480))
+        st.download_button("Download filtered catalog (CSV)",
+                           data=mdf.to_csv(index=False).encode("utf-8"),
+                           file_name="unifymat_master_catalog.csv", mime="text/csv")
+
+    # ---- price spread spotlight (demand-aggregation opportunity)
+    st.markdown("<h3 class='section'>Price spread spotlight</h3>", unsafe_allow_html=True)
+    spread_rows = []
+    for m in m_rows:
+        try:
+            if m["max_rate_inr"] not in ("", None) and m["min_rate_inr"] not in ("", None):
+                mx, mn = float(m["max_rate_inr"]), float(m["min_rate_inr"])
+                if mx > 0 and mx != mn:
+                    spread_rows.append((m, (mx - mn) / mx))
+        except (TypeError, ValueError):
+            pass
+    if spread_rows:
+        spread_rows.sort(key=lambda t: -t[1])
+        sdf = pd.DataFrame([{
+            "NMC": m["national_material_code"],
+            "Description": (m["standardized_description"][:48] + "…")
+            if len(m["standardized_description"]) > 48 else m["standardized_description"],
+            "Shared by": m["cpses_sharing"],
+            "Min ₹": float(m["min_rate_inr"]),
+            "Max ₹": float(m["max_rate_inr"]),
+            "Spread %": round(p * 100, 1)} for m, p in spread_rows[:5]])
+        sdf_styled = (sdf.style
+                      .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
+                           subset=["NMC"])
+                      .hide(axis="index"))
+        st.dataframe(sdf_styled, hide_index=True, use_container_width=True,
+                     height=min(38 + 35 * len(sdf), 480))
+        st.caption("Top 5 by price spread in the current filter — the same material bought "
+                   "at different prices across CPSEs.")
+    else:
+        st.caption("No rate data in current filter.")
 
 # ---------------------------------------------------------------- Audit Trail
 with tab_audit:
