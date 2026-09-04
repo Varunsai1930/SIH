@@ -1,0 +1,25 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Model caches (downloaded at runtime, not vendored)
+.cache/
+
+# Keep data/raw and outputs — they are small and demo-critical.
+# Scratch space
+scratch/
+*.log

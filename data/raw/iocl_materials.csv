@@ -1,0 +1,105 @@
+cpse,material_code,description,uom,category_hint,hsn_code,last_rate_inr,true_material_id
+IOCL,RM-00078,Motor – 1440 RPM – 5 HP – 3 Phase – Flange Mounted B5,EA,410,8544,19503,X5021
+IOCL,RM-00035,Ball Bearing – Deep Groove – 55 mm – 2RS – 629,EA,220,,265,T0029
+IOCL,RM-00056,Seamlzss Pipe – Seamless – ASTM A106 Gr B – SCH 40,METER,340,7304,335,T0049
+IOCL,RM-00026,Stud Bolt – ASTM A193 – M20 X 100 – B7,EA,110,7318,93,T0021
+IOCL,RM-00044,"Gate Valve – Forged Steel – 1.5"" – Socket Weld",EA,310,8481,4996,T0038
+IOCL,RM-00032,Ball Bearing – 2RS – Deep Groove – 6205,EA,220,8482,291,T0025
+IOCL,RM-00091,Gear Oil – ISO VG 220 – EP,PKT,520,2710,315,T0074
+IOCL,RM-00059,"Ss Pipe – A312 TP316 – 2"" NPS – SCH 10 – Seamless",METER,340,,1007,T0052
+IOCL,RM-00098,Centrifugal Pump – 7.5 kW – 50 m – 45 m3/hr – Mechanical Seal,EA,630,8413,31631,T0077
+IOCL,RM-00086,Grease – 5 kg – Lithium – NLGI 2,PKT,520,2710,423,T0070
+IOCL,RM-00080,Contactor – 32 A – 230 V AC – 4 pole,EA,410,8544,2099,T0066
+IOCL,RM-00010,Hex Bolt – A4-70 – Plain – DIN 931 – M12 X 50,EA,110,7318,20,T0006
+IOCL,RM-00013,Hex Nut – Zinc Plated – DIN 934 – 8 – M16,EA,,7318,7,T0010
+IOCL,RM-00074,Cable – 1.1 kV – PVC – 2C x 1.5 sqmm,EA,410,8544,104,T0062
+IOCL,RM-00051,"Check Valve – Flanged – Cast Iron – Class 150 – 2""",EA,350,8481,3284,T0043
+IOCL,RM-00006,Hex Bolt – Black Oxide – DIN 933 – 8.8 – M20 X 80,EA,110,7318,19,T0004
+IOCL,RM-00076,Cable – XLPE – 1.1 kV – 4C x 10 sqmm,EA,410,,94,T0063
+IOCL,RM-00015,Hex Nut – A2-70 – M10 – Plain – DIN 934,EA,110,7318,6,T0011
+IOCL,RM-00024,Flat Washer – DIN 125 – Zinc Plated,EA,110,7318,3,T0019
+IOCL,RM-00096,Centrifugal Pump – 25 m3/hr – 32 m – 5.5 kW – Mefhanical Seal,EA,,8413,29030,X5027
+IOCL,RM-00102,"Thermowell – 150 mm – Stainless Steel 316 – 1/2""",EA,740,9026,936,T0081
+IOCL,RM-00057,"Seamless Pipe – ASTM A106 Gr B – 1"" NPS – SCH 80",METER,340,,327,T0050
+IOCL,RM-00065,"Tee – 1"" – ASTM A234 aPB",EA,350,7307,473,X5018
+IOCL,RM-00030,Socket Screw – Zinc Plated – 12.9,EA,110,7318,25,T0024
+IOCL,RM-00079,Motor – 10 HP – 1440 RPM – Foot Mounted B3 – 3 Phase,EA,410,8544,20133,T0065
+IOCL,RM-00103,"Thermowell – 1/2""",EA,630,9026,931,X5029
+IOCL,RM-00088,Grease – NLGI 2 – 18 kg – Lithium EP,PKT,740,2710,472,T0071
+IOCL,RM-00063,"Tee – SCH 40 – ASTM A234 WPB – 2""",EA,350,7307,439,T0055
+IOCL,RM-00089,Hydraulic Oil – Mineral – 20 L – ISO VG 46,PKT,520,2710,346,T0072
+IOCL,RM-00077,Motor – 5 HP – 1440 RPM – 3 Phase – Foot Mounted B3,EA,,8544,21158,T0064
+IOCL,RM-00012,Hex Bolt – Hot Dip Galvanised – 8.8 – M14 X 56 – DIN 933,EA,110,7318,18,T0007
+IOCL,RM-00068,"Flange – ASTM A105 – 2"" – Raised Face – Class 150 – Slip-On",EA,350,7307,704,T0058
+IOCL,RM-00075,Cable – PVC – 1.1 kV,EA,410,8544,108,T0062
+IOCL,RM-00003,Hex Bolt – IS:1364 – Zinc Plated – 8.8,EA,110,7318,20,T0002
+IOCL,RM-00097,Centrifugal Pump – 45 m3/hr – 7.5 kW – 50 m – Mechanical Seal,EA,630,8413,31263,T0077
+IOCL,RM-00031,Socket Screw – 12.9 – DIN 912 – Zinc Plated – M10 X 35,EA,,7318,24,X5008
+IOCL,RM-00099,Gear Pump – 10 bar – 0.5 LPM – 1.5 kW,EA,630,8413,16639,T0078
+IOCL,RM-00070,"Flange – ASTM A105 – Raised Face – Class 300 – 3"" – Weld Neck",EA,350,7307,664,T0059
+IOCL,RM-00101,"Pressure Gauge – 1/2 BSP – 6"" – 0-10 kg/cm2 – Bourdon Tube",EA,,9026,1573,T0080
+IOCL,RM-00049,"Globe Valve – Class 800 – Socket Weld – Forged Steel – 2""",EA,310,8481,3810,X5014
+IOCL,RM-00053,Safety Valve – Screwed – Bronze – Class 150,EA,310,,4337,T0046
+IOCL,RM-00061,"Elbow – SCH 40 – 45 deg – ASTM A234 WPB – 2""",EA,350,7307,410,X5017
+IOCL,RM-00025,Flat Washer – DIN 125 – Zinc Plated,EA,110,7318,3,T0020
+IOCL,RM-00090,Turbine Oil – Mineral – ISO VG 46 – 20 L,PKT,,2710,367,T0073
+IOCL,RM-00104,"Level Indicator – 1"" NPT – 0-2000 mm – Magnetic Float",EA,,9026,13657,T0082
+IOCL,RM-00023,Flat Washer – DIN 125 – Zinc Plated,EA,110,,3,T0019
+IOCL,RM-00002,Hex Bolt – M12 X 40 – 8.8 – Zinc Plated,EA,110,,19,T0002
+IOCL,RM-00083,Mcb – 4P – 415 V,EA,,,497,T0068
+IOCL,RM-00047,"Ball Valve – Flanged – Stainless Steel 316 – 2"" – Class 800",EA,310,8481,1519,T0040
+IOCL,RM-00093,Turbine Oil – ISO VG 32 – Mineral – 20 L,PKT,520,2710,367,T0075
+IOCL,RM-00040,Roller Bearing – NU310 E – Open Type – 50 mm – Cylindrical,EA,220,8482,1838,X5011
+IOCL,RM-00046,"Ball Valve – Stainless Steel 316 – 1"" – Screwed – Class 150",EA,310,8481,1366,T0039
+IOCL,RM-00100,"Pressure Gauge – 4"" – 1/2 BSP – 0-10 kg/cm2",EA,,9026,1551,T0079
+IOCL,RM-00029,Socket Screw – Black Oxide – DIN 912 – 12.9,EA,110,,22,T0023
+IOCL,RM-00048,"Globe Valve – Forged Steel – Socket Weld – Class 800 – 1.5""",EA,310,8481,3747,T0041
+IOCL,RM-00037,Ball Bearing – 6305 – ZZ – Deep Groove – 25 mm,EA,,8482,263,X5010
+IOCL,RM-00058,"Erw Pipe – 4"" NPS – SCH 40 – IS:1239 – ERW",METER,340,7304,246,T0051
+IOCL,RM-00069,"Flange – ASTM A105 – Weld Neck – 2"" – Class 150",EA,350,7307,717,X5019
+IOCL,RM-00042,"Gate Valve – Class 150 – Flanged – 3"" – Cast Steel",EA,310,8481,4723,T0036
+IOCL,RM-00055,"Seamless Pipe – 3"" NPS – Seamless – ASTM A106 Gr B – SCH 40",METER,,7304,330,T0048
+IOCL,RM-00052,"Check Valve – 3"" – Class 150 – Cast Steel",EA,310,8481,2978,T0044
+IOCL,RM-00072,Cable – 1.1 kV – 3C x 2.5 sqmm – XLPE,EA,410,8544,95,T0061
+IOCL,RM-00004,Hex Bolt – M10 X 40 – DIN 933,EA,110,7318,18,T0003
+IOCL,RM-00014,Hex Nut – Zinc Plated – 8,EA,,7318,6,T0010
+IOCL,RM-00021,Flat Washer – DIN 125 – M10,EA,110,7318,3,T0017
+IOCL,RM-00017,Hex Nut – Hot Dip Galvanised – 8 – DIN 934 – M14,EA,110,7318,6,T0013
+IOCL,RM-00022,Flat Washer – M12 – DIN 125 – Zinc Plated,EA,110,7318,3,T0018
+IOCL,RM-00009,Hex Bolt – M10 X 30 – Placn – A4-70,EA,110,,19,X5004
+IOCL,RM-00041,"Gate Valve – Class 150 – 2""",EA,310,8481,5242,T0035
+IOCL,RM-00064,"Tee – ASTM A234 WuB – 1"" – SCH 80",EA,350,7307,448,T0056
+IOCL,RM-00095,Centrifugal Pump – Mechanical Seal – 3.7 kW – 25 m3/hr,EA,,,31774,T0076
+IOCL,RM-00066,"ceducer – 2""x1"" – SCH 40 – ASTM A234 WPB",EA,,7307,580,T0057
+IOCL,RM-00081,Contactor – 65 A – 3 pole – 230 V AC,EA,410,8544,2015,T0067
+IOCL,RM-00084,Mcb – 63 A – 4P – 415 V – C curve,EA,410,,513,T0069
+IOCL,RM-00073,Cable – 3C x 4.0 sqmm – 1.1 kV,EA,,8544,100,X5020
+IOCL,RM-00020,Flat Washer – DIN 125 – M10 – Zinc Plated,EA,110,7318,3,T0017
+IOCL,RM-00027,Stua Bolt – B16 – Plain – M20 X 100,EA,110,,105,X5007
+IOCL,RM-00033,Ball Bearing – 6205 – Deep Groove – 25 mm – 2RS,EA,,8482,259,T0025
+IOCL,RM-00060,Elbow – ASTM A234 WPB – SCH 40 – 90 deg,EA,220,7307,383,T0053
+IOCL,RM-00005,Hex Bolt – 8.8 – Hot Dip Galvanised – DIN 933 – M10 X 40,EA,110,,19,X5003
+IOCL,RM-00036,Ball Bearing – 25 mm – Deep Groove – 6305 – 2RS,EA,110,8482,291,T0031
+IOCL,RM-00043,"Gate Valve – Class 300 – Cast Steel – 4"" – Flanged",EA,310,8481,4873,T0037
+IOCL,RM-00034,Ball Bearing – Deep Groove – 35 mm – 627,EA,220,8482,267,T0027
+IOCL,RM-00092,Gear Oil – ISO VG 220 – EP – 20 L,PKT,520,2710,287,T0074
+IOCL,RM-00082,Contactor – 230 V AC – 65 A – 4 pole,EA,410,8544,1917,X5022
+IOCL,RM-00011,Hex Bolt – DIN 931 – M12 X 50 – A4-70 – Plain,EA,520,7318,20,T0006
+IOCL,RM-00094,Turbine Oil – ISO VG 32 – 20 L,PKT,520,2710,374,T0075
+IOCL,RM-00085,Mcb – C curve – 415 V – 63 A – 2P,EA,410,8544,463,X5023
+IOCL,RM-00039,Roller Bearing – CC W33 – 85 mm – Spherical – 22217,EA,520,8482,1941,T0033
+IOCL,RM-00016,Hex Nut – Hot Dip Galvanised – M12 – 8 – DIN 934,EA,110,7318,6,T0012
+IOCL,RM-00062,"Elbow – ASTM A234 WPB – 3"" – 90 deg – SCH 40",EA,350,7307,380,T0054
+IOCL,RM-00028,Stud Bolt – Plain – M16 X 80 – B7 – ASTM A193,EA,110,7318,100,T0022
+IOCL,RM-00087,Grease – 18 kg – NLGI 2 – Lithium EP,PKT,,2710,429,T0071
+IOCL,RM-00038,Roller Bearing – Open Type – 22206 – Sphedical – 30 mm,EA,220,8482,2015,T0032
+IOCL,RM-00019,Flat Washer – M16 – DIN 125 – Zinc Plated,EA,110,7318,3,T0016
+IOCL,RM-00008,Hex Bolt – Plain – A2-70,EA,110,7318,18,T0005
+IOCL,RM-00007,Hex Bolt – A2-70 – M10 X 30 – DIN 933 – Plain,EA,110,7318,19,T0005
+IOCL,RM-00071,"Flange – Slip-On – Class 150 – 1"" – ASTM A105 – Raised Face",EA,350,7307,667,T0060
+IOCL,RM-00018,Hex Nut – Hot Dip Galvanised – 8 – M20 – DIN 934,EA,110,7318,6,T0015
+IOCL,RM-00045,"Gate Valve – Forged Steel – Socket Weld – 1.5"" – Class 800",EA,,8481,4777,T0038
+IOCL,RM-00001,Hex Bolt – M16 X 60 – 8.8 – DIN 931 – Black Oxide,EA,110,7318,20,T0001
+IOCL,RM-00050,"Globe Valve – 2"" – Class 150 – Flanged",EA,310,8481,3542,T0042
+IOCL,RM-00067,"Flange – 2"" – Slip-On – Class 150 – Raised Face",EA,350,7307,639,T0058
+IOCL,RM-00054,"Seamless Pipe – SCH 80 – Seamless – 2"" NPS",METER,340,7304,311,X5015
