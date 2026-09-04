@@ -69,7 +69,7 @@ def enrich(records):
     return records
 
 
-def evaluate(records, multi, singles):
+def evaluate(records, multi):
     """Pairwise precision/recall on the LABELED subset + trap safety."""
     labeled = [i for i, r in enumerate(records) if r.get("true_material_id")]
     lab = set(labeled)
@@ -113,8 +113,8 @@ def evaluate(records, multi, singles):
             trap_violations += 1
 
     return {
-        "labeled": len(labeled), "unlabeled": n_unlabeled,
-        "pairs_total_truth": len(same_truth), "tp": tp, "fp": fp, "fn": fn,
+        "unlabeled": n_unlabeled,
+        "pairs_total_truth": len(same_truth), "tp": tp,
         "precision": precision, "recall": recall, "f1": f1,
         "cross_cpse_truth": len(truth_multi_cpse), "cross_cpse_merged": len(merged_multi),
         "cross_cpse_recall": len(merged_multi) / len(truth_multi_cpse) if truth_multi_cpse else 0,
@@ -123,7 +123,7 @@ def evaluate(records, multi, singles):
     }
 
 
-def review_stats(records, reviews, tp, total_pairs, labeled):
+def review_stats(records, reviews, tp, total_pairs):
     """How much recall the human-review workflow can recover (labeled pairs)."""
     correct = sum(1 for r in reviews
                   if records[r["a"]].get("true_material_id")
@@ -170,7 +170,7 @@ def build_review_rows(records, reviews, multi, singles, cluster_conf, master):
                 "kind": "cluster", "reason": "low-confidence",
                 "cpse": m["cpses_sharing"], "material_code": m["national_material_code"],
                 "description": m["standardized_description"],
-                "top_candidates": f"confidence {cluster_conf[ci]:.2f}",
+                "top_candidates": f"CLUSTER (confidence {cluster_conf[ci]:.2f}): low-confidence merge held for review",
                 "suggested_nmc": m["national_material_code"], "decision": "",
             })
     return rows
@@ -189,16 +189,14 @@ def run_pipeline():
     records, ingest_report = load_records()
     records = enrich(records)
 
-    matches, vetoes, reviews, nomatches, emb_info = match_all(records)
-    multi, singles, cluster_conf, exclude = cluster(records, matches)
+    matches, vetoes, reviews, emb_info = match_all(records)
+    multi, singles, cluster_conf = cluster(records, matches)
 
-    metrics = evaluate(records, multi, singles)
-    rvw = review_stats(records, reviews, metrics["tp"], metrics["pairs_total_truth"],
-                       metrics["labeled"])
+    metrics = evaluate(records, multi)
+    rvw = review_stats(records, reviews, metrics["tp"], metrics["pairs_total_truth"])
     master, mapping, audit = build_master(records, multi, singles, cluster_conf)
     review_rows = build_review_rows(records, reviews, multi, singles, cluster_conf, master)
 
-    OUT.mkdir(exist_ok=True)
     write_csv(OUT / "unified_master.csv", master,
               ["national_material_code", "standardized_description", "category", "material_type",
                "uom", "cpses_sharing", "num_legacy_codes", "avg_rate_inr", "min_rate_inr",

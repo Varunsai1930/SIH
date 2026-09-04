@@ -45,7 +45,7 @@ def embed(texts, model_name="all-MiniLM-L6-v2"):
 def _inch_compatible(a, b):
     """Attr-drop tolerant: equal, or one side a subset of the other."""
     sa, sb = set(a), set(b)
-    return sa == sb or sa <= sb or sb <= sa
+    return sa <= sb or sb <= sa
 
 
 def _values_agree(key, va, vb):
@@ -118,9 +118,9 @@ def match_all(records, sim_floor=0.40):
 
     blocks = defaultdict(list)
     for i, r in enumerate(records):
-        blocks[r["_cat"] if r["_cat"] != "unknown" else "unknown"].append(i)
+        blocks[r["_cat"]].append(i)
 
-    matches, vetoes, reviews, nomatches = [], [], [], []
+    matches, vetoes, reviews = [], [], []
     for idxs in blocks.values():
         if len(idxs) < 2:
             continue
@@ -147,9 +147,7 @@ def match_all(records, sim_floor=0.40):
                     reviews.append(rec)
                 elif reason.startswith("veto"):
                     vetoes.append(rec)
-                else:
-                    nomatches.append(rec)
-    return matches, vetoes, reviews, nomatches, emb_info
+    return matches, vetoes, reviews, emb_info
 
 
 class DSU:
@@ -222,9 +220,6 @@ def cluster(records, matches, max_iter=25):
     edge_conf = {(m["a"], m["b"]): m["confidence"] for m in matches}
     cluster_conf = []
     for members in multi:
-        confs = [edge_conf[(a, b)] for x in range(len(members)) for y in range(x + 1, len(members))
-                 if (a, b) in [(members[x], members[y]), ] and (members[x], members[y]) in edge_conf]
-        # simpler: min over accepted edges within the group
         confs = [c for (a, b), c in edge_conf.items() if a in members and b in members]
         cluster_conf.append(min(confs) if confs else 0.5)
-    return multi, singles, cluster_conf, exclude
+    return multi, singles, cluster_conf

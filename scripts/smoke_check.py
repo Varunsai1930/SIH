@@ -18,8 +18,9 @@ Verifies the contract the dashboard's upcoming "spec diff matrix" and
 Note on review-row kinds (real contract, see pipeline.build_review_rows):
 kind="record" rows are record-addressable; kind="cluster" rows are keyed by
 the cluster's NMC (cpse holds a comma-joined CPSE list, top_candidates holds
-a bare "confidence 0.xx" string) and are deliberately NOT resolvable through
-the records index.
+a "CLUSTER (confidence 0.xx): …" string that app.py's parse_candidates
+regex understands) and are deliberately NOT resolvable through the
+records index.
 
 Self-contained and stdlib-only; no network, no test framework.
 Exit code 0 = all checks passed, 1 otherwise.

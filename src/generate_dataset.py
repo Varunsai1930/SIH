@@ -16,7 +16,6 @@ import csv
 import random
 from pathlib import Path
 
-random.seed(42)
 OUT_DIR = Path(__file__).resolve().parents[1] / "data" / "raw"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -270,15 +269,15 @@ def render_value(v, cpse):
         return {"CPCL": v.replace(" sqmm", ""), "IOCL": v, "NTPC": v.replace(" x ", " X ").replace("sqmm", "Sq mm"),
                 "SAIL": v.replace(" x ", "-").replace(" sqmm", "SQMM")}[cpse]
     # pressure classes: 150 / 300 / 800
-    if v in ("150", "300", "800") and v not in ("8",):
+    if v in ("150", "300", "800"):
         return {"CPCL": f"CL {v}", "IOCL": f"Class {v}", "NTPC": f"Class {v}", "SAIL": f"{v}#"}[cpse]
     # sizes like 2" / 2" NPS / 1"x1.5" / 2"x1"
     if '"' in v:
         out = v
         if cpse == "IOCL":
-            out = v.replace('"', '"')
+            out = v
         if cpse == "NTPC":
-            out = v.replace(" NPS", " NB").replace('"', '"')
+            out = v.replace(" NPS", " NB")
         if cpse == "SAIL":
             out = v.replace(" NPS", " NB").replace('"', " INCH")
         return out
@@ -322,7 +321,7 @@ def render_desc(category, family, attrs, cpse, rng):
     return desc
 
 
-def material_code(cpse, seq, rng):
+def material_code(cpse, seq):
     """Each CPSE formats codes differently — codes are meaningless globally."""
     if cpse == "CPCL":
         return f"MAT{100000 + seq}"
@@ -357,7 +356,7 @@ def main():
                 if _ == 1 and (is_trap or rng.random() > 0.18):
                     break
                 desc = render_desc(category, family, attrs, cpse, rng)
-                code = material_code(cpse, seq[cpse], rng)
+                code = material_code(cpse, seq[cpse])
                 seq[cpse] += 1
                 uom = UOM_VARIANT[cpse][UOM_BY_CATEGORY[category]]
                 # category hint: 15% blank, 8% wrong code (dirty ERP data)

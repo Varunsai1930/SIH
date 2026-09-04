@@ -369,7 +369,9 @@ def extract_attrs(norm: str, fine_type: str) -> dict:
     return a
 
 
-# attributes that must match when BOTH rows have them (hard engineering facts)
+# Hard engineering-fact attributes shown first in the UI spec-diff matrix.
+# (Veto enforcement is broader: match.pair_verdict refuses ANY pair whose
+# shared attributes conflict, plus type/category mismatches.)
 VETO_ATTRS = ["thread", "designation", "class", "schedule", "inch", "material", "grade",
               "seal", "flange_type", "end", "voltage", "cable_size", "amps", "poles",
               "hp", "rpm", "mount", "nlgi", "viscosity", "pack", "range", "flow",

@@ -10,8 +10,6 @@ Stage 3: standardization + Common National Material Code + mapping.
 import hashlib
 from datetime import datetime
 
-from normalize import detect_type
-
 FAM_CODE = {
     "hex bolt": "FAST-BOLT", "stud bolt": "FAST-STUD", "socket head cap screw": "FAST-SHCS",
     "hex nut": "FAST-NUT", "flat washer": "FAST-WSHR",
@@ -47,24 +45,42 @@ ATTR_ORDER = ["thread", "inch", "designation", "grade", "material", "finish", "c
               "drive", "seal_type", "range", "gauge_type", "connection", "angle",
               "length", "std"]
 
-UOM_STD = {"NOS": "NOS", "MTR": "MTR", "PKT": "PKT", "KG": "KG", "L": "L"}
-
 
 PRETTY = {"caststeel": "CAST STEEL", "forgedsteel": "FORGED STEEL", "castiron": "CAST IRON",
           "lithiumep": "LITHIUM EP", "lithium": "LITHIUM", "mineral": "MINERAL", "ep": "EP"}
 
 
+def _as_list(v):
+    """Treat scalars and list/tuple values uniformly."""
+    return v if isinstance(v, (list, tuple)) else [v]
+
+
+def _majority(values):
+    """Most common value; ties broken by first appearance."""
+    counts = {}
+    for v in values:
+        counts[v] = counts.get(v, 0) + 1
+    return max(counts, key=lambda v: (counts[v], -values.index(v)))
+
+
 def _fmt_val(k, v):
     if k == "inch":
-        vals = v if isinstance(v, (list, tuple)) else [v]
+        vals = _as_list(v)
         return "-".join(f"{x}IN" for x in sorted(vals))
     if k == "std":
-        vals = v if isinstance(v, (list, tuple)) else [v]
+        vals = _as_list(v)
         return "/".join(s.upper() for s in sorted(vals))
     s = str(v)
     if s.lower() in PRETTY:
         return PRETTY[s.lower()]
     return s.upper().replace(" ", "")
+
+
+def _twin_key(fine_type, attrs, uom_std):
+    """Hashable canonical form of a record, used to spot indistinguishable
+    singleton twins (same form => the differentiating attr was never captured)."""
+    return (FAM_CODE.get(fine_type, "GEN"), uom_std,
+            tuple(sorted((k, _fmt_val(k, attrs[k])) for k in attrs if k != "std")))
 
 
 def std_description(fine_type, attrs, uom_std):
@@ -104,7 +120,7 @@ def nmc_code(fine_type, attrs, uom_std, issue_key=None):
                 break
             n += 1
     _issued_nmc[nmc] = issue_key
-    return nmc, canon
+    return nmc
 
 
 def merge_attrs(records_in_cluster):
@@ -117,20 +133,22 @@ def merge_attrs(records_in_cluster):
     merged = {}
     for k, vals in keys.items():
         if k == "std":
-            flat = sorted({v for tup in vals for v in (tup if isinstance(tup, (list, tuple)) else [tup])})
+            flat = sorted({v for tup in vals for v in _as_list(tup)})
             if flat:
                 merged[k] = tuple(flat)
             continue
         # majority value; ties broken by order of appearance
-        counts = {}
-        for v in vals:
-            counts[v] = counts.get(v, 0) + 1
-        merged[k] = max(counts, key=lambda v: (counts[v], -vals.index(v)))
+        merged[k] = _majority(vals)
     return merged
 
 
 def build_master(records, multi, singles, cluster_conf):
     """Produce unified material master, mapping table, review queue, audit log."""
+    # fresh run: reset the collision registry so a re-upload (same process,
+    # e.g. a second Streamlit run) reissues codes from a clean slate —
+    # record indices shift between runs, otherwise the same real material
+    # could be issued a different, collision-extended NMC.
+    _issued_nmc.clear()
     ts = datetime.now().isoformat(timespec="seconds")
     master, mapping, audit = [], [], []
 
@@ -139,18 +157,12 @@ def build_master(records, multi, singles, cluster_conf):
         fine_type = recs[0]["_type"]
         cat = recs[0]["_cat"]
         merged = merge_attrs(recs)
-        uoms = {}
-        for r in recs:
-            uoms[r["_uom_std"]] = uoms.get(r["_uom_std"], 0) + 1
-        uom_std = max(uoms, key=uoms.get)
+        uom_std = _majority([r["_uom_std"] for r in recs])
         desc = std_description(fine_type, merged, uom_std)
         # issue key = the cluster's member set: distinct clusters can never
         # collide onto one NMC, identical clusters never diverge
-        nmc, canon = nmc_code(fine_type, merged, uom_std, issue_key=("cluster", tuple(members)))
+        nmc = nmc_code(fine_type, merged, uom_std, issue_key=("cluster", tuple(members)))
         cpse_list = sorted({r["cpse"] for r in recs})
-        rep = {}
-        for r in recs:
-            rep.setdefault(r["cpse"], r["material_code"])
         rates = [float(r.get("last_rate_inr") or 0) for r in recs if r.get("last_rate_inr")]
         master.append({
             "national_material_code": nmc,
@@ -185,30 +197,23 @@ def build_master(records, multi, singles, cluster_conf):
     canon_counts = {}
     for i in singles:
         r = records[i]
-        canon = (FAM_CODE.get(r["_type"], "GEN"), r["_uom_std"],
-                 tuple(sorted((k, _fmt_val(k, r["_attrs"][k]))
-                              for k in r["_attrs"] if k != "std")))
-        canon_counts[tuple(canon)] = canon_counts.get(tuple(canon), 0) + 1
+        key = _twin_key(r["_type"], r["_attrs"], r["_uom_std"])
+        canon_counts[key] = canon_counts.get(key, 0) + 1
 
-    issued = {}
     for i in singles:
         r = records[i]
         fine_type, cat = r["_type"], r["_cat"]
         merged = dict(r["_attrs"])
         uom_std = r["_uom_std"]
         desc = std_description(fine_type, merged, uom_std)
-        canon = (FAM_CODE.get(fine_type, "GEN"), uom_std,
-                 tuple(sorted((k, _fmt_val(k, merged[k]))
-                              for k in merged if k != "std")))
-        duplicate_form = canon_counts[tuple(canon)] > 1
+        duplicate_form = canon_counts[_twin_key(fine_type, merged, uom_std)] > 1
         if duplicate_form:
             nmc = (f"PROVISIONAL-{fine_type.upper().replace(' ', '-')[:14]}"
                    f"-{r['cpse']}-{r['material_code']}")
             status = "PROVISIONAL — OFFICER REVIEW (indistinguishable twin)"
         else:
-            nmc, _ = nmc_code(fine_type, merged, uom_std, issue_key=("single", i))
+            nmc = nmc_code(fine_type, merged, uom_std, issue_key=("single", i))
             status = "UNIQUE" if r["_complete"] else "NEEDS_REVIEW"
-        rates = [float(r.get("last_rate_inr") or 0) for _ in [r] if r.get("last_rate_inr")]
         master.append({
             "national_material_code": nmc,
             "standardized_description": desc,
