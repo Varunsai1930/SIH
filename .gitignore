@@ -23,3 +23,6 @@ Thumbs.db
 # Scratch space
 scratch/
 *.log
+
+# Local-only project documentation (never push)
+PROJECT_DOCUMENTATION.txt
