@@ -1,0 +1,15 @@
+# UnifyMat — SIH 26099 pipeline + dashboard
+# Python 3.13 recommended. The app runs fully offline if sentence-transformers
+# cannot load (automatic TF-IDF fallback), so the heavy deps below the line
+# are optional but recommended for embedding-quality matching.
+
+streamlit>=1.63
+plotly>=7.0
+pandas>=3.0
+numpy>=2.5
+scikit-learn>=1.9
+RapidFuzz>=3.14
+
+# Optional — semantic embedding backend (auto-falls back to TF-IDF if absent)
+sentence-transformers>=6.0
+torch>=2.14

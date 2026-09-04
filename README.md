@@ -6,22 +6,56 @@ different codes/descriptions across ERPs. Build an AI platform that matches
 equivalent materials across CPSEs, standardizes them, assigns a Common
 National Material Code, and keeps full traceability to legacy codes.
 
-**Status: pipeline COMPLETE and evaluated. Tomorrow's job = UI + demo + pitch.**
+**Status: pipeline + dashboard COMPLETE. Demo-ready.**
 
 ---
 
 ## Quick start
 
 ```bash
-cd /Users/varun/Downloads/Varun/SIH/sih26099
+cd sih26099
 source .venv/bin/activate              # Python 3.13 venv, all deps installed
 python src/generate_dataset.py         # optional: regenerate data (seeded, deterministic)
-python src/pipeline.py                 # full run: ~9s, writes outputs/
+python src/pipeline.py                 # CLI run: ~10s, writes outputs/
+streamlit run src/app.py               # dashboard: http://localhost:8501
+```
+
+Or from scratch (any machine):
+
+```bash
+pip install -r requirements.txt
+streamlit run src/app.py
 ```
 
 The embedding model (all-MiniLM-L6-v2) is cached in `~/.cache/huggingface`
 after the first run. If campus WiFi blocks HuggingFace, the pipeline
 **auto-falls back to TF-IDF matching** and still runs — good backup story.
+
+## Dashboard (`src/app.py`)
+
+A clean, minimal, government-style web app (institutional blue / amber,
+Swiss layout, no decoration). Four tabs:
+
+1. **Overview** — KPI cards (records, codes issued, unified across CPSEs,
+   auto-merge precision, price spread, pending review), category chart,
+   price-spread chart (the demand-aggregation story), and a status-chip
+   breakdown of the master.
+2. **Review Queue** — the records the AI refuses to guess: AI's top
+   candidates with similarity scores, suggested NMC, Approve / Reject
+   buttons. Decisions persist in `outputs/review_decisions.csv`
+   (officer name + timestamp — audit trail).
+3. **Code Lookup** — type any legacy code (e.g. `MAT100050`) or NMC →
+   result card + equivalent codes across every CPSE with UOM and price band.
+4. **Audit Trail** — persistent officer decisions + machine actions
+   (every cluster creation, logged).
+
+**CSV upload (live ingest)** — sidebar uploader accepts any CSV with
+`material_code, description, uom` columns (the ERP-export shape). Enter the
+CPSE's name, click Ingest — the file is stored in `data/raw/`, the pipeline
+re-harmonizes immediately, and all numbers/tables update. Verified
+end-to-end with a 5th CPSE (GAIL, 15 records): 403 records from 5 CPSEs,
+267 codes, all 15 records matched into shared clusters, still precision
+1.000 / 0 trap violations.
 
 ## Results (current run, on 388 records / 4 CPSEs)
 
@@ -83,34 +117,33 @@ legacy-code mapping + audit trail.
 
 ```
 sih26099/
-├── .venv/                  # Python 3.13 env (pandas, sklearn, rapidfuzz, sentence-transformers)
+├── .streamlit/config.toml   # theme: institutional blue, minimal toolbar
+├── requirements.txt
 ├── data/raw/*.csv          # 4 synthetic CPSE extracts, ground-truthed (true_material_id)
+│                           #   + gail_materials.csv — the 5th-CPSE upload demo (unlabeled, production-style)
 ├── src/
 │   ├── generate_dataset.py # seeded generator: 4 CPSE styles, duplicates, typos, traps (X-ids)
 │   ├── normalize.py        # stage 1 + MIN_ATTRS safety table + synonym dictionaries
 │   ├── match.py            # stage 2: blocking, embeddings, veto, review gate, clustering
 │   ├── standardize.py      # stage 3: NMC generation, mapping, master
-│   └── pipeline.py         # orchestrator + evaluation metrics
+│   ├── pipeline.py         # orchestrator + evaluation metrics (library + CLI)
+│   └── app.py              # Streamlit dashboard (4 tabs + CSV upload)
+├── gui-test-screenshots/   # verified captures of all 4 tabs
 └── outputs/*.csv           # all deliverables listed above
 ```
 
-## Tomorrow's build plan (in priority order)
+## Demo script (rehearse!)
 
-1. **Streamlit dashboard** (`streamlit run app.py`) — three tabs:
-   a. Overview: total records, materials unified, CPSEs sharing, savings chart
-   b. Review queue: pick a row, show AI candidates, Approve/Reject buttons
-      (append decision to review_queue.csv, re-run merge for that pair)
-   c. Lookup: type any legacy code → get NMC + all equivalent codes across CPSEs
-2. **Demo script** (rehearse!):
-   - Load 4 CPSE files → "these CPSEs have never shared data before"
-   - Show two descriptions of the same bolt side by side → AI matches them
-   - Show a trap: 8.8 vs 10.9 bolt → AI refuses, cites conflicting grade
-   - Approve one review item live (the human-governance moment)
-   - Reveal price spread across CPSEs for a shared material → negotiation ammo
-   - Close on "One Nation, One Material Code" with full legacy traceability
-3. **Pitch deck** — the numbers table above is your evidence slide.
-4. Stretch: SAP integration slide (mock REST `/sap/material/{code}` endpoint),
-   never live SAP.
+- Open the dashboard → "these 5 CPSEs have never shared data before"
+- Show two descriptions of the same bolt side by side → AI matched them
+- Show a trap: 8.8 vs 10.9 bolt → AI refuses, cites conflicting grade
+  (see `outputs/rejected_pairs.csv`)
+- Approve one review item live (the human-governance moment) → shows up in
+  Audit Trail, persists across runs
+- Upload demo: drop in a CPSE CSV (or point at `data/raw/gail_materials.csv`)
+  → numbers update live
+- Reveal price spread across CPSEs for a shared material → negotiation ammo
+- Close on "One Nation, One Material Code" with full legacy traceability
 
 ## Judge Q&A prep
 

@@ -23,11 +23,16 @@ from normalize import MIN_ATTRS
 def embed(texts, model_name="all-MiniLM-L6-v2"):
     """Embedding backend. Falls back to char-ngram TF-IDF when the model
     cannot load (offline / no external downloads allowed)."""
+    import os
+    # CPU inference: macOS Metal (MPS) has crashed the demo server under
+    # repeated sessions; 400 rows encode in ~2s on CPU anyway.
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(model_name)
-        emb = model.encode(texts, normalize_embeddings=True)
-        return np.asarray(emb), f"sentence-transformers/{model_name}"
+        model = SentenceTransformer(model_name, device="cpu")
+        emb = model.encode(texts, normalize_embeddings=True,
+                           show_progress_bar=False)
+        return np.asarray(emb), f"sentence-transformers/{model_name} (cpu)"
     except Exception as e:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.preprocessing import normalize
