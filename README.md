@@ -57,20 +57,25 @@ end-to-end with a 5th CPSE (GAIL, 15 records): 403 records from 5 CPSEs,
 267 codes, all 15 records matched into shared clusters, still precision
 1.000 / 0 trap violations.
 
-## Results (current run, on 388 records / 4 CPSEs)
+## Results (current run, on 403 records / 5 CPSEs incl. live GAIL upload)
 
 | Metric | Value | What it means |
 |---|---|---|
 | Precision (auto-merge) | **1.000** | every auto-merged pair is correct |
 | Trap violations | **0** | near-miss materials (8.8 vs 10.9 bolt) NEVER wrongly merged |
-| Cross-CPSE materials merged | 66/105 (62.9%) auto | rest recoverable via review |
+| Cross-CPSE materials merged | 67/105 (63.8%) auto | rest recoverable via review |
 | Potential recall after officer approval | **89.7%** | governance workflow recovers ambiguity |
-| Review queue | 151 items | the human-in-the-loop story the PS demands |
-| Demand-aggregation | 67 shared materials, ~11.5% avg price spread | the savings pitch |
+| Review queue | 155 items | the human-in-the-loop story the PS demands |
+| Demand-aggregation | 68 shared materials, ~12.6% avg price spread | the savings pitch |
+
+Accuracy metrics are computed on the 388 ground-truth-labeled benchmark
+records; the 15 uploaded GAIL records run in production mode (excluded from
+scoring) — demonstrating real-world ingest.
 
 ### Verified invariants (automated checks, all PASS)
 
-- Every one of the 388 input records maps to exactly one NMC (no gaps, no duplicates)
+- Every one of the 403 input records maps to exactly one NMC (403/403
+  mappings, no gaps, no duplicates)
 - All NMCs globally unique; no code ever represents two different real materials
 - `num_legacy_codes` in the master matches actual mapping rows for every NMC
 - Runs are deterministic: re-running pipeline produces byte-identical outputs

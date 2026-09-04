@@ -6,6 +6,7 @@ Design: Swiss minimal, institutional blue, high contrast, no ornament.
 
 Run:  streamlit run src/app.py
 """
+import html
 import re
 import sys
 from collections import Counter, defaultdict
@@ -22,6 +23,7 @@ RAW = ROOT / "data" / "raw"
 OUT = ROOT / "outputs"
 
 sys.path.insert(0, str(SRC))
+from normalize import MIN_ATTRS, VETO_ATTRS  # noqa: E402
 from pipeline import run_pipeline, REQUIRED_COLS  # noqa: E402
 
 st.set_page_config(page_title="UnifyMat · National Material Master",
@@ -107,6 +109,12 @@ h3.section{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:va
 
 /* status chip row (Overview master-status breakdown) */
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+
+/* spec-diff matrix (Review Queue expander): this record vs top candidate */
+.specdiff{width:100%;background:var(--card);border-collapse:collapse;font-size:12.5px;text-align:left;}
+.specdiff th,.specdiff td{border:1px solid var(--border-2);padding:4px 10px;}
+.specdiff th{font-weight:600;color:var(--fg);}
+.specdiff th:first-child,.specdiff td:first-child{width:140px;}
 """
 
 st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
@@ -137,6 +145,9 @@ CAT_PRETTY = {"fastener": "Fasteners", "bearing": "Bearings", "valve": "Valves",
               "pipe": "Pipes", "fitting": "Pipe fittings", "electrical": "Electrical",
               "lubricant": "Lubricants", "pump": "Pumps", "instrument": "Instruments",
               "unknown": "Unclassified"}
+
+ATTR_PRETTY = {"std": "standard", "flange_type": "flange type", "seal_type": "seal type",
+               "cable_size": "cable size", "flow_lpm": "flow (lpm)", "gauge_type": "gauge type"}
 
 DECISIONS = OUT / "review_decisions.csv"
 DEC_COLS = ["timestamp", "officer", "kind", "cpse", "material_code", "decision", "suggested_nmc"]
@@ -189,6 +200,105 @@ def bar_fig(y, x, color, text=None, height=340):
     return fig
 
 
+# ---------------------------------------------------------------- CPSE identity colors
+CPSE_COLORS = {"CPCL": "#B45309", "IOCL": "#E65100", "NTPC": "#0D9488",
+               "SAIL": "#DC2626", "GAIL": "#15803D"}
+CPSE_FALLBACK_COLOR = "#475569"
+
+
+def cpse_color(cpse):
+    """Institutional color for a CPSE short name (muted slate if unknown)."""
+    return CPSE_COLORS.get(str(cpse).strip().upper(), CPSE_FALLBACK_COLOR)
+
+
+def cpse_dot(cpse):
+    """Colored-dot span for unsafe_allow_html HTML: '<bullet> CPSE'."""
+    name = html.escape(str(cpse))
+    return (f'<span style="color:{cpse_color(cpse)};font-size:11px">'
+            f'&#9679; {name}</span>')
+
+
+def styler_candidate_color(v):
+    """CSS color for a 'CPSE/CODE' candidate string (pandas Styler .map)."""
+    return f"color: {cpse_color(str(v).split('/')[0])}"
+
+
+# spec-diff matrix cell states (identical / differing / missing)
+_MATCH_BG, _MATCH_FG = "#F0FDFA", "#047857"
+_DIFF_BG, _DIFF_FG, _DIFF_BORDER = "#FFFBEB", "#92400E", "#FDE68A"
+_MISSING_FG = "#94A3B8"
+
+
+def _attr_str(v):
+    """Stringify an attribute value; tuples/lists (e.g. inch, std) join with '/'."""
+    if isinstance(v, (tuple, list)):
+        return "/".join(str(x) for x in v)
+    return str(v)
+
+
+def _attr_label(k):
+    """Prettified attribute key for captions ('std' -> 'standard')."""
+    return ATTR_PRETTY.get(k, k.replace("_", " "))
+
+
+def resolve_record(idx, cpse, material_code):
+    """Look a record up in the (cpse, material_code) -> record index."""
+    return idx.get((str(cpse), str(material_code)))
+
+
+def specdiff_html(rec, cand):
+    """Attribute-by-attribute comparison of a review record vs its top candidate.
+    Green cells = identical values, amber = differing (a veto would fire),
+    '—' = missing on one side. Returns '' when there is nothing to compare."""
+    a, b = rec.get("_attrs", {}), cand.get("_attrs", {})
+    if not a and not b:
+        return ""
+    keys = set(a) | set(b)
+    ordered = ([k for k in VETO_ATTRS if k in keys]
+               + sorted(k for k in keys if k not in VETO_ATTRS))
+    ordered = ordered[:12]
+
+    def head(r):
+        dot = cpse_dot(r.get("cpse", ""))
+        code = html.escape(str(r.get("material_code", "")))
+        return (f'<span style="font-size:11px">{dot}</span><br>'
+                f'<span class="mono" style="font-size:11.5px;color:var(--muted)">{code}</span>')
+
+    def cell(v, other):
+        if v is None:
+            return f'<td style="color:{_MISSING_FG}">—</td>'
+        sv = _attr_str(v)
+        if other is None or sv == _attr_str(other):
+            return (f'<td style="background:{_MATCH_BG};color:{_MATCH_FG}">'
+                    f'{html.escape(sv)}</td>')
+        return (f'<td style="background:{_DIFF_BG};color:{_DIFF_FG};'
+                f'border:1px solid {_DIFF_BORDER}">{html.escape(sv)}</td>')
+
+    rows = "".join(
+        f"<tr><td><b>{html.escape(_attr_label(k))}</b></td>"
+        f"{cell(a.get(k), b.get(k))}{cell(b.get(k), a.get(k))}</tr>"
+        for k in ordered)
+    return (f'<table class="specdiff"><tr><th>Attribute</th><th>{head(rec)}</th>'
+            f'<th>{head(cand)}</th></tr>{rows}</table>')
+
+
+def matched_on(rec, cand):
+    """Caption line of the attribute values both records agree on."""
+    a, b = rec.get("_attrs", {}), cand.get("_attrs", {})
+    agreed = [_attr_str(a[k]) for k in sorted(a)
+              if k in b and _attr_str(a[k]) == _attr_str(b[k])]
+    if (rec.get("uom") != cand.get("uom")
+            and rec.get("_uom_std") and rec.get("_uom_std") == cand.get("_uom_std")):
+        agreed.append(f"UOM {rec['uom']}→{cand['uom']} normalized")
+    return " · ".join(html.escape(x) for x in agreed)
+
+
+def missing_identity(rec):
+    """'grade, thread' — this family's identity attributes the record lacks."""
+    req = MIN_ATTRS.get(rec.get("_type", ""), [])
+    return ", ".join(_attr_label(k) for k in req if k not in rec.get("_attrs", {}))
+
+
 # ---------------------------------------------------------------- data / state
 if "bundle" not in st.session_state:
     with st.spinner("Harmonizing material masters (first run)…"):
@@ -201,6 +311,9 @@ mapping = B["mapping"]
 metrics = B["metrics"]
 emb_info = B["emb_info"]
 backend = "Embeddings" if "sentence-transformers" in emb_info else "TF-IDF (offline mode)"
+
+# (cpse, material_code) -> record — resolves review candidates back to full rows
+record_idx = {(r["cpse"], r["material_code"]): r for r in records}
 
 cpse_count = len({r["cpse"] for r in records})
 shared = [m for m in master if m["num_legacy_codes"] >= 2 and "," in m["cpses_sharing"]]
@@ -319,6 +432,17 @@ with tab_over:
                 f'<div class="note" style="margin-top:4px">{verdict}</div>',
                 unsafe_allow_html=True)
 
+    ex = st.columns(2)
+    ex[0].download_button("Download unified master (CSV)",
+                          data=pd.DataFrame(master).to_csv(index=False).encode("utf-8"),
+                          file_name="unified_master.csv", mime="text/csv",
+                          use_container_width=True)
+    ex[1].download_button("Download code mapping (CSV)",
+                           data=pd.DataFrame(mapping).to_csv(index=False).encode("utf-8"),
+                           file_name="code_mapping.csv", mime="text/csv",
+                           use_container_width=True)
+    st.caption("Also written to outputs/ by every pipeline run.")
+
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.markdown("<h3 class='section'>Material landscape</h3>", unsafe_allow_html=True)
 
@@ -361,17 +485,50 @@ with tab_review:
     k[1].metric("Approved", int((decisions["decision"] == "APPROVED").sum()) if len(decisions) else 0)
     k[2].metric("Rejected", int((decisions["decision"] == "REJECTED").sum()) if len(decisions) else 0)
 
+    st.download_button("Download review queue (CSV)",
+                       data=pd.DataFrame(review_rows).to_csv(index=False).encode("utf-8"),
+                       file_name="review_queue.csv", mime="text/csv")
+
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     if not pending:
         st.success("Review queue is clear — every ambiguous record has an officer decision.")
     for i, (row, _) in enumerate(pending):
         label = f"{row['cpse']} · {row['material_code']} — {row['description'][:72]}"
         with st.expander(label):
+            rec = (resolve_record(record_idx, row.get("cpse", ""), row.get("material_code", ""))
+                   if row.get("kind") == "record" else None)
+            if rec is not None:
+                miss = missing_identity(rec)
+                if miss:
+                    st.caption(f"Held for review — missing identity attribute(s) for "
+                               f"{rec.get('_type', 'material')}: {miss}")
+                elif rec.get("_complete") is False:
+                    st.caption(f"Held for review — identity attributes incomplete for "
+                               f"{rec.get('_type', 'material')}")
             cands = parse_candidates(row["top_candidates"])
-            st.dataframe(cands.rename(columns={"candidate": "Candidate (best first)",
-                                               "score": "Similarity",
-                                               "description": "Candidate description"}),
-                         hide_index=True, use_container_width=True, height=min(38 + 35 * len(cands), 150))
+            cand_df = cands.rename(columns={"candidate": "Candidate (best first)",
+                                            "score": "Similarity",
+                                            "description": "Candidate description"})
+            styled = (cand_df.style.map(styler_candidate_color,
+                                        subset=["Candidate (best first)"])
+                      .hide(axis="index"))
+            st.dataframe(styled, hide_index=True, use_container_width=True,
+                         height=min(38 + 35 * len(cands), 150))
+            if rec is not None and len(cands):
+                head = str(cands.iloc[0]["candidate"])
+                if "/" in head:
+                    cpse, _, code = head.partition("/")
+                    cand = resolve_record(record_idx, cpse, code)
+                    if cand is not None:
+                        table = specdiff_html(rec, cand)
+                        if table:
+                            st.markdown(table, unsafe_allow_html=True)
+                            st.caption("green = identical · amber = differing — amber on a hard "
+                                       "attribute (grade, schedule, material, seal…) means the "
+                                       "AI will refuse this pair.")
+                            why = matched_on(rec, cand)
+                            st.caption(f"Why this match — Matched on: {why}" if why
+                                       else "Why this match — no shared identity attributes")
             st.markdown(f'<div class="result"><span class="nmc">{row["suggested_nmc"]}</span>'
                         f'<span class="chip prov">SUGGESTED</span></div>', unsafe_allow_html=True)
             b = st.columns(2)
@@ -398,6 +555,8 @@ with tab_lookup:
                 unsafe_allow_html=True)
     if "lookup_input" not in st.session_state:
         st.session_state.lookup_input = ""
+    if "_next_lookup" in st.session_state:  # set by a quick-pick button on the previous run
+        st.session_state.lookup_input = st.session_state.pop("_next_lookup")
     q = st.text_input("Legacy material code or National Code", key="lookup_input",
                       placeholder="e.g. MAT100050, RM-00035, or NMC-FAST-WSHR-…")
 
@@ -427,7 +586,7 @@ with tab_lookup:
         pc = st.columns(len(picks))
         for col, (why, code) in zip(pc, picks):
             if col.button(f"{code}", help=why, use_container_width=True):
-                st.session_state.lookup_input = code
+                st.session_state["_next_lookup"] = code
                 st.rerun()
         st.caption(" · ".join(f"**{c}** — {w}" for w, c in picks))
 
@@ -449,11 +608,13 @@ with tab_lookup:
                                      " across CPSEs")
                 except Exception:
                     pass
+                shared_dots = " ".join(cpse_dot(c.strip())
+                                       for c in str(mrow["cpses_sharing"]).split(",") if c.strip())
                 st.markdown(
                     f'<div class="result"><span class="nmc">{nmc}</span>{status_chip(mrow["status"])}'
                     f'<div class="desc">{mrow["standardized_description"]}</div>'
                     f'<div class="meta">Category: {CAT_PRETTY.get(mrow["category"], mrow["category"])}'
-                    f' · Standard UOM: {mrow["uom"]} · Shared by: {mrow["cpses_sharing"]}'
+                    f' · Standard UOM: {mrow["uom"]} · Shared by: {shared_dots}'
                     f'{price_bit}</div></div>',
                     unsafe_allow_html=True)
             eq = pd.DataFrame([{
@@ -462,7 +623,12 @@ with tab_lookup:
                 if len(r["legacy_description"]) > 71 else r["legacy_description"],
                 "UOM": r["legacy_uom"]} for r in rows])
             st.markdown("<h3 class='section'>Equivalent legacy codes</h3>", unsafe_allow_html=True)
-            st.dataframe(eq, hide_index=True, use_container_width=True,
+            eq_styled = (eq.style
+                         .map(lambda v: f"color: {cpse_color(v)}", subset=["CPSE"])
+                         .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
+                              subset=["Legacy code"])
+                         .hide(axis="index"))
+            st.dataframe(eq_styled, hide_index=True, use_container_width=True,
                          height=min(38 + 35 * len(eq), 240))
 
 # ---------------------------------------------------------------- Audit Trail
@@ -478,6 +644,10 @@ with tab_audit:
     else:
         st.caption("No officer decisions recorded yet — approve or reject items in the Review Queue.")
     st.markdown("**Machine actions (current run)**")
+    if DECISIONS.exists():
+        st.download_button("Download officer decisions (CSV)",
+                           data=DECISIONS.read_bytes(),
+                           file_name="review_decisions.csv", mime="text/csv")
     audit = pd.DataFrame(B["audit"])
     if len(audit):
         audit = audit.rename(columns={"national_material_code": "National code", "action": "Action",
