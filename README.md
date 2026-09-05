@@ -37,13 +37,18 @@ A clean, minimal, government-style web app (institutional blue / amber,
 Swiss layout, no decoration). Four tabs:
 
 1. **Overview** — KPI cards (records, codes issued, unified across CPSEs,
-   auto-merge precision, price spread, pending review), category chart,
-   price-spread chart (the demand-aggregation story), and a status-chip
-   breakdown of the master.
+   auto-merge precision, human-governed recall, price spread, pending
+   review), category chart, price-spread chart (the demand-aggregation
+   story), and a status-chip breakdown of the master.
 2. **Review Queue** — the records the AI refuses to guess: AI's top
    candidates with similarity scores, suggested NMC, Approve / Reject
-   buttons. Decisions persist in `outputs/review_decisions.csv`
-   (officer name + timestamp — audit trail).
+   buttons. **Approving now changes the registry itself** — the record
+   merges into the confirmed code on the next harmonization (blocked
+   automatically if a hard engineering attribute conflicts with any
+   member), the old singleton code is retired, and the merge is logged as
+   `OFFICER_MERGED` in the audit trail. Decisions persist in
+   `outputs/review_decisions.csv` (officer name + timestamp — audit
+   trail).
 3. **Code Lookup** — type any legacy code (e.g. `MAT100050`) or NMC →
    result card + equivalent codes across every CPSE with UOM and price band.
 4. **Audit Trail** — persistent officer decisions + machine actions
@@ -62,15 +67,20 @@ end-to-end with a 5th CPSE (GAIL, 15 records): 403 records from 5 CPSEs,
 | Metric | Value | What it means |
 |---|---|---|
 | Precision (auto-merge) | **1.000** | every auto-merged pair is correct |
-| Trap violations | **0** | near-miss materials (8.8 vs 10.9 bolt) NEVER wrongly merged |
+| **Precision (final registry, incl. officer merges)** | **1.000** | officer decisions applied — still zero wrong merges |
+| Trap violations (auto AND final) | **0** | near-miss materials (8.8 vs 10.9 bolt) NEVER wrongly merged — not even by an officer |
 | Cross-CPSE materials merged | 67/105 (63.8%) auto | rest recoverable via review |
-| Potential recall after officer approval | **89.7%** | governance workflow recovers ambiguity |
-| Review queue | 155 items | the human-in-the-loop story the PS demands |
-| Demand-aggregation | 68 shared materials, ~12.6% avg price spread | the savings pitch |
+| **Recall of the final registry** | **36.8% measured** (89.7% projected) | governance workflow moves the number, not just promises |
+| Review queue | 155 items (152 pending) | the human-in-the-loop story the PS demands |
+| Demand-aggregation | 68 shared materials, ~12.8% avg price spread | the savings pitch |
 
 Accuracy metrics are computed on the 388 ground-truth-labeled benchmark
 records; the 15 uploaded GAIL records run in production mode (excluded from
-scoring) — demonstrating real-world ingest.
+scoring) — demonstrating real-world ingest. The **final-registry**
+metrics are recomputed after officer merges are applied, so the
+human-governance workflow's effect on recall (0.357 → 0.368 with 3
+approvals live, climbing as officers work the queue) is measured, not
+asserted.
 
 ### Verified invariants (automated checks, all PASS)
 
@@ -80,6 +90,9 @@ scoring) — demonstrating real-world ingest.
 - `num_legacy_codes` in the master matches actual mapping rows for every NMC
 - Runs are deterministic: re-running pipeline produces byte-identical outputs
   (except audit-log timestamps)
+- **Officer merges are veto-checked**: an approval that would put a
+  grade-10.9 record into a grade-8.8 code is refused (`OFFICER_MERGE_BLOCKED`
+  in the audit log) — verified with a deliberately hostile approval
 - **Offline mode verified**: with sentence-transformers unavailable (no
   HuggingFace access), the TF-IDF fallback delivers precision 1.000, 0 trap
   violations, cross-CPSE 65/105 — matching quality holds on this dataset.
