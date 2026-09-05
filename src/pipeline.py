@@ -18,13 +18,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from normalize import normalize_text, detect_type, extract_attrs, normalize_uom
-from match import match_all, cluster, record_complete
+from match import match_all, cluster, record_complete, pair_verdict
 from standardize import build_master
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 OUT = ROOT / "outputs"
 OUT.mkdir(exist_ok=True)
+DECISIONS = OUT / "review_decisions.csv"
 
 REQUIRED_COLS = ["material_code", "description", "uom"]
 
@@ -123,6 +124,48 @@ def evaluate(records, multi):
     }
 
 
+def evaluate_final(records, mapping):
+    """Pairwise accuracy of the FINAL registry — machine merges + officer
+    decisions — against ground truth. This is the number the governance
+    workflow actually delivers (vs evaluate(), which is auto-merge only)."""
+    idx = {(r["cpse"], r["material_code"]): i for i, r in enumerate(records)}
+    labeled = {i for i, r in enumerate(records) if r.get("true_material_id")}
+
+    idx_by_truth = defaultdict(list)
+    for i in labeled:
+        idx_by_truth[records[i]["true_material_id"]].append(i)
+    same_truth = set()
+    for members in idx_by_truth.values():
+        for x in range(len(members)):
+            for y in range(x + 1, len(members)):
+                same_truth.add(tuple(sorted((members[x], members[y]))))
+
+    groups = defaultdict(list)
+    for row in mapping:
+        i = idx.get((row["cpse"], row["legacy_material_code"]))
+        if i is not None:
+            groups[row["national_material_code"]].append(i)
+    pred_same = set()
+    for members in groups.values():
+        lab_m = sorted(i for i in members if i in labeled)
+        for x in range(len(lab_m)):
+            for y in range(x + 1, len(lab_m)):
+                pred_same.add((lab_m[x], lab_m[y]))
+
+    tp = len(same_truth & pred_same)
+    fp = len(pred_same - same_truth)
+    fn = len(same_truth - pred_same)
+    precision = tp / (tp + fp) if (tp + fp) else 1.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    trap_violations = 0
+    for members in groups.values():
+        ids = {records[i]["true_material_id"] for i in members if i in labeled}
+        if any(x.startswith("X") for x in ids) and any(x.startswith("T") for x in ids):
+            trap_violations += 1
+    return {"final_tp": tp, "final_precision": precision,
+            "final_recall": recall, "final_trap_violations": trap_violations}
+
+
 def review_stats(records, reviews, tp, total_pairs):
     """How much recall the human-review workflow can recover (labeled pairs)."""
     correct = sum(1 for r in reviews
@@ -141,6 +184,9 @@ def build_review_rows(records, reviews, multi, singles, cluster_conf, master):
     for k, i in enumerate(singles):
         idx_to_nmc[i] = master[len(multi) + k]["national_material_code"]
 
+    decided = {}
+    for d in load_officer_decisions():
+        decided[(d["cpse"], d["material_code"])] = d["decision"]
     rev_by_rec = defaultdict(list)
     for r in reviews:
         ra, rb = records[r["a"]], records[r["b"]]
@@ -161,7 +207,7 @@ def build_review_rows(records, reviews, multi, singles, cluster_conf, master):
             "description": rec["description"],
             "top_candidates": cand_str,
             "suggested_nmc": idx_to_nmc.get(top[0][1], "") if top else "",
-            "decision": "",
+            "decision": decided.get((rec["cpse"], rec["material_code"]), ""),
         })
     for ci, members in enumerate(multi):
         if cluster_conf[ci] < 0.70:
@@ -174,6 +220,124 @@ def build_review_rows(records, reviews, multi, singles, cluster_conf, master):
                 "suggested_nmc": m["national_material_code"], "decision": "",
             })
     return rows
+
+
+def load_officer_decisions():
+    """Persistent officer decisions (outputs/review_decisions.csv), newest last."""
+    if not DECISIONS.exists():
+        return []
+    import csv as _csv
+    with open(DECISIONS, newline="", encoding="utf-8") as f:
+        return [row for row in _csv.DictReader(f)
+                if row.get("material_code") and row.get("decision")]
+
+
+def _hard_conflict(rec_a, rec_b):
+    """True when a conflicting hard engineering attribute makes ANY merge of
+    the two records unsafe — for AI and officer alike (Lock 1)."""
+    _, _, reason = pair_verdict(rec_a, rec_b, 1.0)
+    return reason.startswith("veto")
+
+
+def apply_officer_decisions(records, decisions, master, mapping, audit, review_rows):
+    """Close the human-in-the-loop: officer decisions change the registry.
+
+    APPROVED record-kind decisions merge the held record into the exact NMC
+    the officer confirmed. The record's mapping row is re-pointed to that
+    code (mapped onto it — the target's identity is never re-derived, so
+    the officer's decision stays valid across runs), the target master row
+    grows by it, and the record's retired singleton code disappears from
+    the master. A conflicting hard engineering attribute against ANY member
+    of the target cluster still blocks the merge — an officer cannot put a
+    grade 8.8 bolt into a 10.9 code — and the refusal is audited as
+    OFFICER_MERGE_BLOCKED.
+
+    REJECTED decisions leave the record standing alone under its own code:
+    the officer has ruled the AI's proposal wrong, so it is never re-merged.
+
+    Mutates master/mapping/audit/review_rows in place; returns stats.
+    """
+    idx = {(r["cpse"], r["material_code"]): i for i, r in enumerate(records)}
+    latest = {}
+    for d in decisions:  # a record decided twice: the newest decision wins
+        latest[(d["cpse"], d["material_code"])] = d
+
+    maps_by_nmc = defaultdict(list)
+    for row in mapping:
+        maps_by_nmc[row["national_material_code"]].append(row)
+    master_by_nmc = {m["national_material_code"]: m for m in master}
+
+    # officer merges applied this run, per target: a second merge into the
+    # same code must veto-check against the first officer's record too
+    added = defaultdict(list)
+    merges, blocked, stale, merged_idx = [], 0, 0, set()
+
+    for (cpse, code), d in sorted(latest.items()):
+        if d["decision"] != "APPROVED" or d.get("kind") != "record":
+            continue
+        target_nmc = d.get("suggested_nmc", "")
+        mrow = master_by_nmc.get(target_nmc)
+        i = idx.get((cpse, code))
+        if i is None or mrow is None or target_nmc not in maps_by_nmc:
+            stale += 1     # record or approved code no longer in the registry
+            continue
+        my_row = next((row for row in mapping
+                       if (row["cpse"], row["legacy_material_code"]) == (cpse, code)), None)
+        if my_row is None:
+            continue
+        old_nmc = my_row["national_material_code"]
+        if old_nmc == target_nmc:
+            continue        # already mapped onto the approved code
+        members = [idx[(m["cpse"], m["legacy_material_code"])]
+                   for m in maps_by_nmc[target_nmc]
+                   if (m["cpse"], m["legacy_material_code"]) in idx]
+        members += added[target_nmc]
+        if i in members:
+            continue
+        rec = records[i]
+        if any(_hard_conflict(rec, records[m]) for m in members):
+            blocked += 1
+            audit.append({"national_material_code": target_nmc,
+                          "action": "OFFICER_MERGE_BLOCKED",
+                          "members": len(members), "confidence": 1.0,
+                          "auto": False, "timestamp": d.get("timestamp", "")})
+            for rr in review_rows:
+                if rr["kind"] == "record" and \
+                        (rr["cpse"], rr["material_code"]) == (cpse, code):
+                    rr["decision"] = "APPROVED — BLOCKED (hard-attribute conflict)"
+            continue
+
+        # merge: re-point the mapping row, retire the old singleton code,
+        # grow the target master row (legacy count, sharing CPSEs, price band)
+        member_recs = [records[m] for m in members] + [rec]
+        rates = [float(r.get("last_rate_inr") or 0) for r in member_recs
+                 if r.get("last_rate_inr")]
+        mrow["num_legacy_codes"] += 1
+        cpes = set(mrow["cpses_sharing"].split(","))
+        cpes.add(rec["cpse"])
+        mrow["cpses_sharing"] = ",".join(sorted(cpes))
+        mrow["avg_rate_inr"] = round(sum(rates) / len(rates), 2) if rates else mrow["avg_rate_inr"]
+        mrow["min_rate_inr"] = min(rates) if rates else mrow["min_rate_inr"]
+        mrow["max_rate_inr"] = max(rates) if rates else mrow["max_rate_inr"]
+        mrow["status"] = "OFFICER_MERGED"
+        my_row["national_material_code"] = target_nmc
+        # retire the merged record's now-empty singleton code (a review-kind
+        # record is never auto-merged, so its old code always holds exactly
+        # itself; guard anyway so a multi-member code is never stranded)
+        old_row = master_by_nmc.get(old_nmc)
+        if old_row is not None and old_row["num_legacy_codes"] == 1:
+            master[:] = [m for m in master
+                         if m["national_material_code"] != old_nmc]
+        audit.append({"national_material_code": target_nmc,
+                      "action": "OFFICER_MERGED", "members": len(member_recs),
+                      "confidence": 1.0, "auto": False,
+                      "timestamp": d.get("timestamp", "")})
+        added[target_nmc].append(i)
+        merged_idx.add(i)
+        merges.append(f"{cpse}/{code} -> {target_nmc}")
+
+    return {"merges_applied": len(merges), "merges_blocked": blocked,
+            "stale": stale, "merges": merges, "merged_records": merged_idx}
 
 
 def write_csv(path, rows, fieldnames):
@@ -197,6 +361,15 @@ def run_pipeline():
     master, mapping, audit = build_master(records, multi, singles, cluster_conf)
     review_rows = build_review_rows(records, reviews, multi, singles, cluster_conf, master)
 
+    # officer decisions change the registry itself — after the machine pass
+    # (metrics stay "auto-merge only" so the 1.000 precision claim remains
+    # strictly about the machine; officer merges are reported separately)
+    officer = apply_officer_decisions(records, load_officer_decisions(),
+                                     master, mapping, audit, review_rows)
+    metrics["officer_merges_applied"] = officer["merges_applied"]
+    if metrics["has_ground_truth"]:
+        metrics.update(evaluate_final(records, mapping))
+
     write_csv(OUT / "unified_master.csv", master,
               ["national_material_code", "standardized_description", "category", "material_type",
                "uom", "cpses_sharing", "num_legacy_codes", "avg_rate_inr", "min_rate_inr",
@@ -216,6 +389,7 @@ def run_pipeline():
         "records": records, "ingest_report": ingest_report,
         "master": master, "mapping": mapping, "audit": audit,
         "review_rows": review_rows, "vetoes": vetoes,
+        "officer_merges": officer,
         "metrics": metrics, "review": rvw, "emb_info": emb_info,
         "multi": multi, "singles": singles, "cluster_conf": cluster_conf,
         "n_matches": len(matches), "n_review_pairs": len(reviews),
@@ -252,6 +426,14 @@ def main():
         print(f"    human-review queue: {b['review']['review_pairs']} pairs, "
               f"{b['review']['review_same_material']} are true matches")
         print(f"    potential recall after officer approval: {b['review']['potential_recall']:.1%}")
+        if "final_recall" in m:
+            print(f"    FINAL registry (machine + officer decisions): "
+                  f"precision {m['final_precision']:.3f} · recall {m['final_recall']:.3f} · "
+                  f"trap violations {m['final_trap_violations']}")
+        if m.get("officer_merges_applied"):
+            print(f"    officer merges applied this run: {m['officer_merges_applied']}"
+                  + (f" ({b['officer_merges']['merges_blocked']} blocked by hard-attribute "
+                     f"veto)" if b["officer_merges"]["merges_blocked"] else ""))
         if m["unlabeled"]:
             print(f"    production mode: {m['unlabeled']} uploaded record(s) without ground truth "
                   f"excluded from accuracy metrics")

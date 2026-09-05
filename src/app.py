@@ -76,6 +76,7 @@ div[data-testid="stConnectionStatus"]{visibility:hidden;}
 .chip{display:inline-block;padding:1px 9px;border-radius:99px;font-size:10.5px;
   font-weight:600;letter-spacing:.03em;margin-left:8px;vertical-align:middle;}
 .chip.auto{background:#DCFCE7;color:#166534;}
+.chip.officer{background:#DBEAFE;color:#1E40AF;}
 .chip.review{background:#FEF3C7;color:#92400E;}
 .chip.unique{background:#F1F5F9;color:#475569;}
 .chip.prov{background:#FEF3C7;color:#92400E;}
@@ -132,6 +133,8 @@ def status_chip(status):
     s = status.upper()
     if "PROVISIONAL" in s:
         return '<span class="chip prov">PROVISIONAL</span>'
+    if "OFFICER_MERGED" in s:
+        return '<span class="chip officer">OFFICER-MERGED</span>'
     if "REVIEW" in s:
         return '<span class="chip review">NEEDS REVIEW</span>'
     if s == "UNIQUE":
@@ -423,7 +426,7 @@ with tab_over:
         prec, prec_sub = "—", "no labels in uploaded data"
     n_prov = sum(1 for m in master if "PROVISIONAL" in m["status"])
 
-    c = st.columns(6)
+    c = st.columns(7)
     with c[0]:
         st.markdown(kpi_card("Records ingested", f"{len(records):,}", f"from {cpse_count} CPSEs"), unsafe_allow_html=True)
     with c[1]:
@@ -435,19 +438,30 @@ with tab_over:
     with c[3]:
         st.markdown(kpi_card("Auto-merge precision", prec, prec_sub), unsafe_allow_html=True)
     with c[4]:
-        st.markdown(kpi_card("Avg price spread", f"{avg_spread * 100:.1f}%",
-                             "across CPSEs on shared materials", accent=True), unsafe_allow_html=True)
+        off_n = metrics.get("officer_merges_applied", 0)
+        if metrics.get("has_ground_truth") and "final_recall" in metrics:
+            gov_sub = f"final registry: {metrics['final_recall'] * 100:.1f}% recall · {off_n} officer merge(s)"
+        else:
+            gov_sub = f"{off_n} officer merge(s) applied · veto-checked"
+        st.markdown(kpi_card("Human-governed recall",
+                             f"{metrics.get('final_recall', B['review']['potential_recall']) * 100:.1f}%",
+                             gov_sub, accent=True), unsafe_allow_html=True)
     with c[5]:
+        st.markdown(kpi_card("Avg price spread", f"{avg_spread * 100:.1f}%",
+                             "across CPSEs on shared materials"), unsafe_allow_html=True)
+    with c[6]:
         st.markdown(kpi_card("Pending review", f"{B['n_review_pairs']:,}",
                              "ambiguous pairs held for officer"), unsafe_allow_html=True)
 
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-    status_counts = Counter(("AUTO" if "AUTO" in m["status"].upper()
+    status_counts = Counter(("OFFICER-MERGED" if "OFFICER_MERGED" in m["status"].upper()
+                             else "AUTO" if "AUTO" in m["status"].upper()
                              else "PROVISIONAL" if "PROVISIONAL" in m["status"].upper()
                              else "NEEDS REVIEW" if "REVIEW" in m["status"].upper() else "UNIQUE")
                             for m in master)
-    chip_cls = {"AUTO": "auto", "NEEDS REVIEW": "review", "PROVISIONAL": "prov", "UNIQUE": "unique"}
+    chip_cls = {"AUTO": "auto", "NEEDS REVIEW": "review", "PROVISIONAL": "prov",
+                "UNIQUE": "unique", "OFFICER-MERGED": "officer"}
     chips_html = "".join(
         f'<span class="chip {chip_cls.get(k, "unique")}">{v} {k.lower()}</span>'
         for k, v in status_counts.most_common())
@@ -509,12 +523,19 @@ with tab_review:
     pending, decided = [], []
     for row in review_rows:
         d = decision_key.get((row["cpse"], row["material_code"]), "")
-        (decided if d else pending).append((row, d))
+        # an approved merge the hard-attribute veto blocked stays in the queue —
+        # the officer must resolve the conflict, it is not a done decision
+        if "BLOCKED" in str(row.get("decision", "")):
+            pending.append((row, "BLOCKED"))
+        else:
+            (decided if d else pending).append((row, d))
 
     st.markdown("<h3 class='section'>Records the AI refuses to guess</h3>", unsafe_allow_html=True)
     st.caption("These records are missing identity attributes (grade, size, designation…). "
                "The AI proposes the most likely national code; a CPSE officer confirms or rejects. "
-               "Approving a wrong merge is impossible by design — every decision is logged.")
+               "Approving merges the record into the confirmed code on the next harmonization — "
+               "blocked automatically if a hard engineering attribute conflicts with any member. "
+               "Every decision is logged.")
 
     k = st.columns(3)
     k[0].metric("Pending", len(pending))
@@ -528,9 +549,13 @@ with tab_review:
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     if not pending:
         st.success("Review queue is clear — every ambiguous record has an officer decision.")
-    for i, (row, _) in enumerate(pending):
+    for i, (row, state) in enumerate(pending):
         label = f"{row['cpse']} · {row['material_code']} — {row['description'][:72]}"
         with st.expander(label):
+            if state == "BLOCKED":
+                st.error("Approve was recorded, but the hard-attribute veto blocked the merge "
+                         "— this record conflicts with a member of the confirmed code. "
+                         "Reject it (it keeps its own code) or have the CPSE correct the source row.")
             rec = (resolve_record(record_idx, row.get("cpse", ""), row.get("material_code", ""))
                    if row.get("kind") == "record" else None)
             if rec is not None:
@@ -579,12 +604,17 @@ with tab_review:
             if b[0].button("Approve", key=f"ap_{i}", type="primary", use_container_width=True):
                 append_decision(officer, row["kind"], row["cpse"], row["material_code"],
                                 "APPROVED", row["suggested_nmc"])
-                st.toast(f"Approved {row['cpse']}/{row['material_code']}")
+                with st.spinner("Merging into the confirmed code — veto-checked…"):
+                    st.session_state.bundle = run_pipeline()
+                st.toast(f"Approved {row['cpse']}/{row['material_code']} — merged into "
+                         f"{row['suggested_nmc']}")
                 st.rerun()
             if b[1].button("Reject", key=f"rj_{i}", use_container_width=True):
                 append_decision(officer, row["kind"], row["cpse"], row["material_code"],
                                 "REJECTED", row["suggested_nmc"])
-                st.toast(f"Rejected {row['cpse']}/{row['material_code']}")
+                with st.spinner("Registry updated — record stands alone under its own code…"):
+                    st.session_state.bundle = run_pipeline()
+                st.toast(f"Rejected {row['cpse']}/{row['material_code']} — keeps its own code")
                 st.rerun()
 
     if len(decisions):
@@ -807,8 +837,10 @@ with tab_master:
 # ---------------------------------------------------------------- Audit Trail
 with tab_audit:
     st.markdown("<h3 class='section'>Governance trail</h3>", unsafe_allow_html=True)
-    st.caption("Officer decisions persist across pipeline runs. Machine actions below are "
-               "regenerated for the current harmonization run and are also written to outputs/audit_log.csv.")
+    st.caption("Officer decisions persist across pipeline runs and are applied to the registry "
+               "itself on every harmonization (OFFICER_MERGED rows below; the hard-attribute veto "
+               "can block an unsafe merge). Machine actions are regenerated for the current run and "
+               "are also written to outputs/audit_log.csv.")
     if len(decisions):
         st.markdown("**Officer decisions (persistent)**")
         st.dataframe(decisions[["timestamp", "officer", "cpse", "material_code",
