@@ -39,8 +39,27 @@ output for eyeball checking.
 
 import html
 import math
+import re
 
 import pandas as pd
+
+# ------------------------------------------------------------------ candidate parser
+_CAND_RE = re.compile(r"(.+?) \((?:sim|confidence) ([\d.]+)\): (.*)")
+
+
+def parse_candidates(cand_str):
+    """Review-queue top_candidates string -> DataFrame(candidate, score,
+    description). One definition shared by app.py and the smoke check so
+    the format can never desync between producer and verifier."""
+    rows = []
+    for part in str(cand_str).split(" || "):
+        m = _CAND_RE.match(part.strip())
+        if m:
+            rows.append({"candidate": m.group(1), "score": float(m.group(2)),
+                         "description": m.group(3)})
+        elif part.strip():
+            rows.append({"candidate": part.strip(), "score": "", "description": ""})
+    return pd.DataFrame(rows, columns=["candidate", "score", "description"])
 
 # ------------------------------------------------------------------ tokens
 _FONT_SANS = "'Fira Sans', -apple-system, 'Segoe UI', Roboto, sans-serif"

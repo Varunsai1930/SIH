@@ -19,6 +19,9 @@ from rapidfuzz import fuzz
 
 from normalize import MIN_ATTRS
 
+# rows per similarity-matrix chunk — bounds peak memory on large blocks
+_CHUNK = 256
+
 
 def embed(texts, model_name="all-MiniLM-L6-v2"):
     """Embedding backend. Falls back to char-ngram TF-IDF when the model
@@ -111,8 +114,17 @@ def pair_verdict(a, b, sim):
     return False, score, f"no-match:score={score:.2f},sim={sim:.2f}"
 
 
-def match_all(records, sim_floor=0.40):
-    """Returns (matches, rejects, embedding_backend_info)."""
+def match_all(records, sim_floor=0.40, top_k=128):
+    """Returns (matches, rejects, embedding_backend_info).
+
+    Candidates per record are bounded (top_k strongest neighbors) and the
+    block's similarity matrix is computed in row chunks, so a large
+    single-category upload costs O(n·top_k) verdicts and O(n·chunk)
+    memory instead of a dense n x n matrix. With top_k >= the largest
+    category block (128 > every block in the benchmark data) the pair set
+    and enumeration order are exactly those of the original full upper-
+    triangle pass — outputs are byte-identical (verified).
+    """
     texts = [r["_norm"] for r in records]
     emb, emb_info = embed(texts)
 
@@ -121,32 +133,48 @@ def match_all(records, sim_floor=0.40):
         blocks[r["_cat"]].append(i)
 
     matches, vetoes, reviews = [], [], []
+    seen = set()  # (a, b) with a < b — each pair verdicted exactly once
     for idxs in blocks.values():
-        if len(idxs) < 2:
+        n = len(idxs)
+        if n < 2:
             continue
         M = emb[idxs]
-        sims = M @ M.T
-        for ii in range(len(idxs)):
-            for jj in range(ii + 1, len(idxs)):
-                s = float(sims[ii, jj])
-                if s < sim_floor:
-                    continue
-                ia, ib = idxs[ii], idxs[jj]
-                ok, conf, reason = pair_verdict(records[ia], records[ib], s)
-                rec = {
-                    "a": ia, "b": ib, "sim": round(s, 4), "confidence": round(conf, 4),
-                    "reason": reason,
-                    "a_cpse": records[ia]["cpse"], "a_code": records[ia]["material_code"],
-                    "a_desc": records[ia]["description"],
-                    "b_cpse": records[ib]["cpse"], "b_code": records[ib]["material_code"],
-                    "b_desc": records[ib]["description"],
-                }
-                if ok:
-                    matches.append(rec)
-                elif reason.startswith("review"):
-                    reviews.append(rec)
-                elif reason.startswith("veto"):
-                    vetoes.append(rec)
+        for start in range(0, n, _CHUNK):
+            stop = min(start + _CHUNK, n)
+            sims = M[start:stop] @ M.T          # chunk x block — bounded memory
+            for ci in range(stop - start):
+                ii = start + ci
+                row = sims[ci]
+                if n > top_k:  # bound the pair count only when it can bite
+                    cand = np.sort(np.argpartition(-row, top_k)[:top_k])
+                else:
+                    cand = np.arange(n)
+                for jj in cand:
+                    if jj <= ii:
+                        continue
+                    s = float(row[jj])
+                    if s < sim_floor:
+                        continue
+                    ia, ib = idxs[ii], idxs[jj]
+                    pair = (ia, ib)
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                    ok, conf, reason = pair_verdict(records[ia], records[ib], s)
+                    rec = {
+                        "a": ia, "b": ib, "sim": round(s, 4), "confidence": round(conf, 4),
+                        "reason": reason,
+                        "a_cpse": records[ia]["cpse"], "a_code": records[ia]["material_code"],
+                        "a_desc": records[ia]["description"],
+                        "b_cpse": records[ib]["cpse"], "b_code": records[ib]["material_code"],
+                        "b_desc": records[ib]["description"],
+                    }
+                    if ok:
+                        matches.append(rec)
+                    elif reason.startswith("review"):
+                        reviews.append(rec)
+                    elif reason.startswith("veto"):
+                        vetoes.append(rec)
     return matches, vetoes, reviews, emb_info
 
 
@@ -204,14 +232,15 @@ def cluster(records, matches, max_iter=25):
                 removed = True
         if not removed:
             break
-
-    dsu = DSU(n)
-    for conf, a, b in edges:
-        if (a, b) not in exclude:
-            dsu.union(a, b)
-    groups = defaultdict(list)
-    for i in range(n):
-        groups[dsu.find(i)].append(i)
+    else:
+        # loop exhausted max_iter without a clean break — rebuild final groups
+        dsu = DSU(n)
+        for conf, a, b in edges:
+            if (a, b) not in exclude:
+                dsu.union(a, b)
+        groups = defaultdict(list)
+        for i in range(n):
+            groups[dsu.find(i)].append(i)
 
     multi = [sorted(g) for g in groups.values() if len(g) > 1]
     singles = [g[0] for g in groups.values() if len(g) == 1]
@@ -220,6 +249,7 @@ def cluster(records, matches, max_iter=25):
     edge_conf = {(m["a"], m["b"]): m["confidence"] for m in matches}
     cluster_conf = []
     for members in multi:
-        confs = [c for (a, b), c in edge_conf.items() if a in members and b in members]
+        mset = set(members)
+        confs = [c for (a, b), c in edge_conf.items() if a in mset and b in mset]
         cluster_conf.append(min(confs) if confs else 0.5)
     return multi, singles, cluster_conf

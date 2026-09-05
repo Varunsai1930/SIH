@@ -102,18 +102,21 @@ _issued_nmc = {}
 def nmc_code(fine_type, attrs, uom_std, issue_key=None):
     """Stable Common National Material Code: NMC-<FAM>-<HASH8>.
 
+    The hash is a content fingerprint (not a security primitive), hence
+    usedforsecurity=False; it must stay SHA-1 so already-issued NMCs never change.
+
     Deterministic: identical canonical forms produce identical codes.
     When the same code would be issued for a *different* record/cluster,
     it is extended so one NMC can never silently mean two materials.
     """
     canon = [FAM_CODE.get(fine_type, "GEN"), uom_std]
     canon += [f"{LABEL.get(k, k)}={_fmt_val(k, attrs[k])}" for k in ATTR_ORDER if k in attrs]
-    digest = hashlib.sha1("|".join(canon).encode()).hexdigest()[:8].upper()
+    digest = hashlib.sha1("|".join(canon).encode(), usedforsecurity=False).hexdigest()[:8].upper()
     nmc = f"NMC-{FAM_CODE.get(fine_type, 'GEN')}-{digest}"
     if nmc in _issued_nmc and _issued_nmc[nmc] != issue_key:
         n = 1
         while True:
-            ext = hashlib.sha1((str(n) + "|").encode() + "|".join(canon).encode()).hexdigest()[:2].upper()
+            ext = hashlib.sha1((str(n) + "|").encode() + "|".join(canon).encode(), usedforsecurity=False).hexdigest()[:2].upper()
             cand = f"{nmc}{ext}"
             if cand not in _issued_nmc or _issued_nmc[cand] == issue_key:
                 nmc = cand

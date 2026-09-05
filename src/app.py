@@ -6,6 +6,7 @@ Design: Swiss minimal, institutional blue, high contrast, no ornament.
 
 Run:  streamlit run src/app.py
 """
+import csv
 import html
 import re
 import sys
@@ -24,8 +25,9 @@ OUT = ROOT / "outputs"
 
 sys.path.insert(0, str(SRC))
 from normalize import MIN_ATTRS, VETO_ATTRS  # noqa: E402
-from pipeline import run_pipeline, REQUIRED_COLS  # noqa: E402
-from ui_widgets import confidence_ring, preflight_report  # noqa: E402
+from pipeline import (run_pipeline, REQUIRED_COLS, guard_formula_cell,  # noqa: E402
+                     shared_materials, price_spreads, row_spread)
+from ui_widgets import confidence_ring, preflight_report, parse_candidates  # noqa: E402
 
 st.set_page_config(page_title="UnifyMat · National Material Master",
                    layout="wide", initial_sidebar_state="expanded")
@@ -80,7 +82,6 @@ div[data-testid="stConnectionStatus"]{visibility:hidden;}
 .chip.review{background:#FEF3C7;color:#92400E;}
 .chip.unique{background:#F1F5F9;color:#475569;}
 .chip.prov{background:#FEF3C7;color:#92400E;}
-.chip.rejected{background:#FEE2E2;color:#991B1B;}
 
 /* buttons — replace Streamlit red with institutional blue */
 .stButton>button[kind="primary"]{background-color:var(--primary);border-color:var(--primary);color:#fff;}
@@ -108,8 +109,7 @@ h3.section{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:va
   font-weight:700;margin:1.2rem 0 .5rem .1rem;}
 .note{font-size:12px;color:var(--muted-2);}
 
-/* status chip row (Overview master-status breakdown) */
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+/* status chips (Review Queue / master statuses) */
 
 /* spec-diff matrix (Review Queue expander): this record vs top candidate */
 .specdiff{width:100%;background:var(--card);border-collapse:collapse;font-size:12.5px;text-align:left;}
@@ -125,8 +125,8 @@ st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
 def kpi_card(label, value, sub="", accent=False):
     sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
     cls = "kpi accent" if accent else "kpi"
-    return (f'<div class="{cls}"><div class="kpi-label">{label}</div>'
-            f'<div class="kpi-value">{value}</div>{sub_html}</div>')
+    return (f'<div class="{cls}"><div class="kpi-label">{html.escape(str(label))}</div>'
+            f'<div class="kpi-value">{html.escape(str(value))}</div>{sub_html}</div>')
 
 
 def status_chip(status):
@@ -155,6 +155,10 @@ ATTR_PRETTY = {"std": "standard", "flange_type": "flange type", "seal_type": "se
 DECISIONS = OUT / "review_decisions.csv"
 DEC_COLS = ["timestamp", "officer", "kind", "cpse", "material_code", "decision", "suggested_nmc"]
 
+# one dense similarity pass + O(pairs) verdict pass per category block —
+# an unbounded upload can exhaust the single-threaded Streamlit process
+MAX_UPLOAD_ROWS = 5000
+
 
 def load_decisions() -> pd.DataFrame:
     if DECISIONS.exists():
@@ -169,23 +173,20 @@ def append_decision(officer, kind, cpse, code, decision, nmc):
     OUT.mkdir(exist_ok=True)
     new_file = not DECISIONS.exists()
     with open(DECISIONS, "a", newline="", encoding="utf-8") as f:
-        import csv as _csv
-        w = _csv.writer(f)
+        w = csv.writer(f)
         if new_file:
             w.writerow(DEC_COLS)
-        w.writerow([datetime.now().isoformat(timespec="seconds"), officer, kind,
-                    cpse, code, decision, nmc])
+        w.writerow([datetime.now().isoformat(timespec="seconds"),
+                    guard_formula_cell(officer), kind, guard_formula_cell(cpse),
+                    guard_formula_cell(code), decision, guard_formula_cell(nmc)])
 
 
-def parse_candidates(cand_str):
-    rows = []
-    for part in str(cand_str).split(" || "):
-        m = re.match(r"(.+?) \((?:sim|confidence) ([\d.]+)\): (.*)", part.strip())
-        if m:
-            rows.append({"candidate": m.group(1), "score": float(m.group(2)), "description": m.group(3)})
-        elif part.strip():
-            rows.append({"candidate": part.strip(), "score": "", "description": ""})
-    return pd.DataFrame(rows, columns=["candidate", "score", "description"])
+def safe_csv_bytes(df):
+    """CSV download bytes with the same Excel-formula guard as outputs/."""
+    guarded = df.copy()
+    for col in guarded.select_dtypes(include="object"):
+        guarded[col] = guarded[col].map(guard_formula_cell)
+    return guarded.to_csv(index=False).encode("utf-8")
 
 
 def bar_fig(y, x, color, text=None, height=340):
@@ -319,14 +320,8 @@ backend = "Embeddings" if "sentence-transformers" in emb_info else "TF-IDF (offl
 record_idx = {(r["cpse"], r["material_code"]): r for r in records}
 
 cpse_count = len({r["cpse"] for r in records})
-shared = [m for m in master if m["num_legacy_codes"] >= 2 and "," in m["cpses_sharing"]]
-spreads = []
-for s in shared:
-    try:
-        if s["max_rate_inr"] and s["min_rate_inr"]:
-            spreads.append((s, (float(s["max_rate_inr"]) - float(s["min_rate_inr"])) / float(s["max_rate_inr"])))
-    except Exception:
-        pass
+shared = shared_materials(master)
+spreads = price_spreads(master)
 avg_spread = sum(x for _, x in spreads) / len(spreads) if spreads else 0
 
 decisions = load_decisions()
@@ -362,6 +357,14 @@ with st.sidebar:
                 st.error("Missing required column(s): " + ", ".join(missing))
                 if st.session_state.get("preflight_html"):
                     st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
+            elif len(df) > MAX_UPLOAD_ROWS:
+                # resource guard: one dense similarity pass + pair loop per
+                # category block — an unbounded upload can OOM the server
+                st.error(f"Upload rejected — {len(df):,} rows exceeds the "
+                         f"{MAX_UPLOAD_ROWS:,}-row limit. Split the extract "
+                         "by category or upload in batches.")
+                if st.session_state.get("preflight_html"):
+                    st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
             else:
                 # hard guardrail: material_code is the registry primary key —
                 # blank or duplicate codes corrupt the harmonized master, so
@@ -381,17 +384,28 @@ with st.sidebar:
                     st.success(f"Valid file — {len(df)} records ready to ingest.")
                     if st.button("Ingest file", type="primary", use_container_width=True):
                         slug = re.sub(r"[^a-z0-9]+", "", cpse_name.lower().strip()) or "upload"
-                        # real ERP extracts often carry their own org column —
-                        # the officer-entered name is authoritative
-                        if "cpse" in df.columns:
-                            df["cpse"] = cpse_name.strip().upper()
+                        dest = RAW / f"{slug}_materials.csv"
+                        # an exact-name re-upload refreshes that CPSE's extract;
+                        # a name that merely SLUGS onto another CPSE's file
+                        # ("GAIL!", "G.A.I.L" -> gail_materials.csv) is refused
+                        # rather than silently overwriting its data
+                        existing_cpse = dest.stem.split("_")[0].upper()
+                        if dest.exists() and cpse_name.strip().upper() != existing_cpse:
+                            st.error(f"Upload rejected — '{cpse_name.strip()}' would "
+                                     f"overwrite the ingested file for '{existing_cpse}' "
+                                     f"({dest.name}). Pick a different short name.")
                         else:
-                            df.insert(0, "cpse", cpse_name.strip().upper())
-                        df.to_csv(RAW / f"{slug}_materials.csv", index=False)
-                        with st.spinner("Harmonizing with new data…"):
-                            st.session_state.bundle = run_pipeline()
-                        st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
-                        st.rerun()
+                            # real ERP extracts often carry their own org column —
+                            # the officer-entered name is authoritative
+                            if "cpse" in df.columns:
+                                df["cpse"] = cpse_name.strip().upper()
+                            else:
+                                df.insert(0, "cpse", cpse_name.strip().upper())
+                            df.to_csv(dest, index=False)
+                            with st.spinner("Harmonizing with new data…"):
+                                st.session_state.bundle = run_pipeline()
+                            st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
+                            st.rerun()
         except Exception as e:
             st.error(f"Could not read file: {e}")
 
@@ -476,13 +490,13 @@ with tab_over:
 
     ex = st.columns(2)
     ex[0].download_button("Download unified master (CSV)",
-                          data=pd.DataFrame(master).to_csv(index=False).encode("utf-8"),
+                          data=safe_csv_bytes(pd.DataFrame(master)),
                           file_name="unified_master.csv", mime="text/csv",
                           use_container_width=True)
     ex[1].download_button("Download code mapping (CSV)",
-                           data=pd.DataFrame(mapping).to_csv(index=False).encode("utf-8"),
-                           file_name="code_mapping.csv", mime="text/csv",
-                           use_container_width=True)
+                          data=safe_csv_bytes(pd.DataFrame(mapping)),
+                          file_name="code_mapping.csv", mime="text/csv",
+                          use_container_width=True)
     st.caption("Also written to outputs/ by every pipeline run.")
 
     # pre-flight report for the most recent sidebar upload (dismissable)
@@ -520,15 +534,15 @@ with tab_over:
 # ---------------------------------------------------------------- Review Queue
 with tab_review:
     review_rows = B["review_rows"]
-    pending, decided = [], []
+    pending = []
     for row in review_rows:
         d = decision_key.get((row["cpse"], row["material_code"]), "")
         # an approved merge the hard-attribute veto blocked stays in the queue —
         # the officer must resolve the conflict, it is not a done decision
         if "BLOCKED" in str(row.get("decision", "")):
             pending.append((row, "BLOCKED"))
-        else:
-            (decided if d else pending).append((row, d))
+        elif not d:
+            pending.append((row, ""))
 
     st.markdown("<h3 class='section'>Records the AI refuses to guess</h3>", unsafe_allow_html=True)
     st.caption("These records are missing identity attributes (grade, size, designation…). "
@@ -543,7 +557,7 @@ with tab_review:
     k[2].metric("Rejected", int((decisions["decision"] == "REJECTED").sum()) if len(decisions) else 0)
 
     st.download_button("Download review queue (CSV)",
-                       data=pd.DataFrame(review_rows).to_csv(index=False).encode("utf-8"),
+                       data=safe_csv_bytes(pd.DataFrame(review_rows)),
                        file_name="review_queue.csv", mime="text/csv")
 
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -579,7 +593,7 @@ with tab_review:
                 ring_html = " ".join(
                     f'<span style="display:inline-flex;align-items:center;gap:4px;'
                     f'margin-right:14px;white-space:nowrap;">'
-                    f'{confidence_ring(float(c)) if str(c) not in ("", "nan") else confidence_ring(float("nan"))}'
+                    f'{confidence_ring(c)}'
                     f'<span style="font-size:11px;color:#475569;font-family:\'Fira Code\',monospace;">{html.escape(str(k))}</span></span>'
                     for k, c in list(zip(cands["candidate"], cands["score"]))[:5])
                 st.markdown(f'<div style="margin-top:2px;">{ring_html}</div>', unsafe_allow_html=True)
@@ -598,7 +612,7 @@ with tab_review:
                             why = matched_on(rec, cand)
                             st.caption(f"Why this match — Matched on: {why}" if why
                                        else "Why this match — no shared identity attributes")
-            st.markdown(f'<div class="result"><span class="nmc">{row["suggested_nmc"]}</span>'
+            st.markdown(f'<div class="result"><span class="nmc">{html.escape(str(row["suggested_nmc"]))}</span>'
                         f'<span class="chip prov">SUGGESTED</span></div>', unsafe_allow_html=True)
             b = st.columns(2)
             if b[0].button("Approve", key=f"ap_{i}", type="primary", use_container_width=True):
@@ -667,7 +681,7 @@ with tab_lookup:
     qu = q.strip().upper()
     if qu:
         rows = by_nmc.get(qu) or by_legacy.get(qu) or [
-            m for nmc, ms in by_nmc.items() if qu != "" and nmc.startswith(qu) for m in ms]
+            m for nmc, ms in by_nmc.items() if nmc.startswith(qu) for m in ms]
         if not rows:
             st.info("No match. Try a full legacy code, or a National Code prefix such as NMC-FAST-.")
         else:
@@ -688,10 +702,10 @@ with tab_lookup:
                 conf_ring = (f'<span style="margin-left:8px;vertical-align:middle;">'
                              f'{confidence_ring(conf)}</span>' if conf not in ("", None) else "")
                 st.markdown(
-                    f'<div class="result"><span class="nmc">{nmc}</span>{status_chip(mrow["status"])}{conf_ring}'
-                    f'<div class="desc">{mrow["standardized_description"]}</div>'
+                    f'<div class="result"><span class="nmc">{html.escape(str(nmc))}</span>{status_chip(mrow["status"])}{conf_ring}'
+                    f'<div class="desc">{html.escape(str(mrow["standardized_description"]))}</div>'
                     f'<div class="meta">Category: {CAT_PRETTY.get(mrow["category"], mrow["category"])}'
-                    f' · Standard UOM: {mrow["uom"]} · Shared by: {shared_dots}'
+                    f' · Standard UOM: {html.escape(str(mrow["uom"]))} · Shared by: {shared_dots}'
                     f'{price_bit}</div></div>',
                     unsafe_allow_html=True)
             eq = pd.DataFrame([{
@@ -747,13 +761,6 @@ with tab_master:
     m_only_shared = st.checkbox("Only shared materials (2+ CPSEs)", value=False)
     m_only_spread = st.checkbox("Only codes with price spread", value=False)
 
-    def _has_spread(m):
-        try:
-            return (m["max_rate_inr"] not in ("", None) and m["min_rate_inr"] not in ("", None)
-                    and float(m["max_rate_inr"]) != float(m["min_rate_inr"]))
-        except (TypeError, ValueError):
-            return False
-
     m_rows = master
     if mq:
         ql = mq.lower()
@@ -765,7 +772,7 @@ with tab_master:
     if m_only_shared:
         m_rows = [m for m in m_rows if "," in m["cpses_sharing"]]
     if m_only_spread:
-        m_rows = [m for m in m_rows if _has_spread(m)]
+        m_rows = [m for m in m_rows if row_spread(m) not in (None, 0)]
 
     st.caption(f"Showing {len(m_rows):,} of {len(master):,} codes"
                + (" · filters active" if (mq or m_cats or m_only_shared or m_only_spread)
@@ -799,20 +806,12 @@ with tab_master:
         st.dataframe(m_styled, hide_index=True, use_container_width=True,
                      height=min(38 + 35 * len(mdf), 480))
         st.download_button("Download filtered catalog (CSV)",
-                           data=mdf.to_csv(index=False).encode("utf-8"),
+                           data=safe_csv_bytes(mdf),
                            file_name="unifymat_master_catalog.csv", mime="text/csv")
 
     # ---- price spread spotlight (demand-aggregation opportunity)
     st.markdown("<h3 class='section'>Price spread spotlight</h3>", unsafe_allow_html=True)
-    spread_rows = []
-    for m in m_rows:
-        try:
-            if m["max_rate_inr"] not in ("", None) and m["min_rate_inr"] not in ("", None):
-                mx, mn = float(m["max_rate_inr"]), float(m["min_rate_inr"])
-                if mx > 0 and mx != mn:
-                    spread_rows.append((m, (mx - mn) / mx))
-        except (TypeError, ValueError):
-            pass
+    spread_rows = [(m, s) for m in m_rows if (s := row_spread(m)) is not None and s > 0]
     if spread_rows:
         spread_rows.sort(key=lambda t: -t[1])
         sdf = pd.DataFrame([{

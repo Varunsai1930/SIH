@@ -1,15 +1,16 @@
 """
 UnifyMat (SIH 26099) — data-contract smoke check.
 
-Verifies the contract the dashboard's upcoming "spec diff matrix" and
-"why this match" explainability rely on:
+Verifies the contract the dashboard's "spec diff matrix" and "why this
+match" explainability rely on:
 
   bundle["records"]      base fields (cpse, material_code, description, uom)
                          + enriched fields (_attrs dict, _uom_std, _type,
                          _cat, _complete) on every record
   bundle["review_rows"]  six UI keys on every row; every kind="record" row
                          resolves via the (cpse, material_code) -> record
-                         index; top_candidates parse with app.py's regex and
+                         index; top_candidates parse with app.py's parser
+                         (ui_widgets.parse_candidates — shared source) and
                          resolve to real records (10 sample "Matched on"
                          lines printed as a UI preview)
   bundle["master"]      non-empty national_material_code on every entry
@@ -27,7 +28,6 @@ Exit code 0 = all checks passed, 1 otherwise.
 
 Run:  .venv/bin/python scripts/smoke_check.py
 """
-import re
 import sys
 import traceback
 from collections import Counter
@@ -38,9 +38,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from normalize import MIN_ATTRS  # noqa: E402
 from pipeline import run_pipeline  # noqa: E402
-
-# Same pattern src/app.py parse_candidates() uses.
-CAND_RE = re.compile(r"(.+?) \((?:sim|confidence) ([\d.]+)\): (.*)")
+from ui_widgets import parse_candidates  # noqa: E402  — same parser app.py uses
 
 RECORD_KEYS = ("cpse", "material_code", "description", "uom",
                "_attrs", "_uom_std", "_type", "_cat", "_complete")
@@ -131,23 +129,23 @@ def main():
     bad = []
     for row in sample:
         own = index.get((row["cpse"], row["material_code"]))
-        parts = [p.strip() for p in str(row["top_candidates"]).split(" || ")
-                 if p.strip()]
-        m = CAND_RE.match(parts[0]) if parts else None
-        cand = None
-        if m:
-            cand_cpse, _, cand_code = m.group(1).partition("/")
-            cand = index.get((cand_cpse, cand_code))
-        if own is None or m is None or cand is None:
+        cands = parse_candidates(row["top_candidates"])
+        cand = cand_id = None
+        if len(cands) and str(cands.iloc[0]["candidate"]):
+            cand_id = str(cands.iloc[0]["candidate"])
+            if "/" in cand_id:
+                cand_cpse, _, cand_code = cand_id.partition("/")
+                cand = index.get((cand_cpse, cand_code))
+        if own is None or cand_id is None or cand is None:
             why = ("own record unresolved" if own is None else
-                   "top candidate did not parse" if m is None else
-                   f"candidate {m.group(1)} unresolved in records index")
+                   "top candidate did not parse" if cand_id is None else
+                   f"candidate {cand_id} unresolved in records index")
             bad.append(f"{row['cpse']}/{row['material_code']}: {why}")
             continue
         agreed = agreed_keys(own, cand)
         matched = (" · ".join(f"{k}={sval(own['_attrs'][k])}" for k in agreed)
                    or "no shared attrs")
-        print(f"      {row['cpse']}/{row['material_code']} → {m.group(1)} "
+        print(f"      {row['cpse']}/{row['material_code']} → {cand_id} "
               f"— Matched on: {matched}")
     check(f"top candidate of first {len(sample)} review records parses + resolves",
           not bad, "; ".join(bad[:3]))

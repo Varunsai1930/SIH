@@ -136,16 +136,21 @@ legacy-code mapping + audit trail.
 ```
 sih26099/
 ├── .streamlit/config.toml   # theme: institutional blue, minimal toolbar
-├── requirements.txt
+├── requirements.txt         # pinned to the verified build
+├── SECURITY.md              # security checkup: findings fixed + how to re-run
 ├── data/raw/*.csv          # 4 synthetic CPSE extracts, ground-truthed (true_material_id)
 │                           #   + gail_materials.csv — the 5th-CPSE upload demo (unlabeled, production-style)
 ├── src/
 │   ├── generate_dataset.py # seeded generator: 4 CPSE styles, duplicates, typos, traps (X-ids)
 │   ├── normalize.py        # stage 1 + MIN_ATTRS safety table + synonym dictionaries
-│   ├── match.py            # stage 2: blocking, embeddings, veto, review gate, clustering
+│   ├── match.py            # stage 2: blocking, chunked embeddings, veto, review gate, clustering
 │   ├── standardize.py      # stage 3: NMC generation, mapping, master
-│   ├── pipeline.py         # orchestrator + evaluation metrics (library + CLI)
-│   └── app.py              # Streamlit dashboard (4 tabs + CSV upload)
+│   ├── pipeline.py         # orchestrator + metrics + officer-decision application
+│   ├── ui_widgets.py       # pure-render widgets (rings, pre-flight, candidate parser)
+│   └── app.py              # Streamlit dashboard (5 tabs + CSV upload)
+├── scripts/
+│   ├── smoke_check.py      # data-contract checks (6)
+│   └── apptest_check.py    # headless UI suite (AppTest, 13 checks)
 ├── gui-test-screenshots/   # verified captures of all 4 tabs
 └── outputs/*.csv           # all deliverables listed above
 ```
