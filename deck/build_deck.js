@@ -161,7 +161,7 @@ const title = (s, kicker, head) => {
     ["Same-bolt match", "side-by-side CPSE descriptions resolved to one NMC"],
     ["Near-miss refusal", "butterfly vs gate valve at 0.63 similarity — vetoed on 5 attributes"],
     ["Officer approval", "human-in-the-loop decision, logged with name & timestamp"],
-    ["5th CPSE upload", "GAIL CSV ingested live — numbers update before your eyes"],
+    ["5th CPSE upload", "pre-flight quality check, then live ingest — numbers update on screen"],
     ["Price spread", "negotiation-ready spread on 68 shared materials"],
   ];
   beats.forEach((b, i) => {
