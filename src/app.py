@@ -56,7 +56,6 @@ div[data-testid="stConnectionStatus"]{visibility:hidden;}
 .hero-title{font-size:21px;font-weight:700;letter-spacing:.01em;}
 .hero-title span{font-weight:400;color:#BFDBFE;font-size:15px;margin-left:6px;}
 .hero-sub{font-size:12.5px;color:#DBEAFE;margin-top:3px;}
-.hero-right{font-size:11.5px;text-align:right;color:#BFDBFE;line-height:1.6;white-space:nowrap;}
 
 /* KPI cards */
 .kpi{background:var(--card);border:1px solid var(--border-2);border-radius:8px;
@@ -361,15 +360,35 @@ with st.sidebar:
                 if st.session_state.get("preflight_html"):
                     st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
             else:
-                st.success(f"Valid file — {len(df)} records ready to ingest.")
-                if st.button("Ingest file", type="primary", use_container_width=True):
-                    slug = re.sub(r"[^a-z0-9]+", "", cpse_name.lower().strip()) or "upload"
-                    df.insert(0, "cpse", cpse_name.strip().upper())
-                    df.to_csv(RAW / f"{slug}_materials.csv", index=False)
-                    with st.spinner("Harmonizing with new data…"):
-                        st.session_state.bundle = run_pipeline()
-                    st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
-                    st.rerun()
+                # hard guardrail: material_code is the registry primary key —
+                # blank or duplicate codes corrupt the harmonized master, so
+                # refuse ingest until the CPSE fixes the extract (the pre-flight
+                # card above shows exactly what to fix)
+                codes = (df["material_code"].fillna("")
+                         .map(lambda v: str(v).strip().upper()))
+                blank_codes = int((codes == "").sum())
+                dup_rows = int(codes[codes != ""].duplicated().sum())
+                if blank_codes or dup_rows:
+                    st.error("Upload rejected — fix the file and re-upload: "
+                             f"{blank_codes} blank material_code(s) · "
+                             f"{dup_rows} duplicate material_code(s).")
+                    if st.session_state.get("preflight_html"):
+                        st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
+                else:
+                    st.success(f"Valid file — {len(df)} records ready to ingest.")
+                    if st.button("Ingest file", type="primary", use_container_width=True):
+                        slug = re.sub(r"[^a-z0-9]+", "", cpse_name.lower().strip()) or "upload"
+                        # real ERP extracts often carry their own org column —
+                        # the officer-entered name is authoritative
+                        if "cpse" in df.columns:
+                            df["cpse"] = cpse_name.strip().upper()
+                        else:
+                            df.insert(0, "cpse", cpse_name.strip().upper())
+                        df.to_csv(RAW / f"{slug}_materials.csv", index=False)
+                        with st.spinner("Harmonizing with new data…"):
+                            st.session_state.bundle = run_pipeline()
+                        st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
+                        st.rerun()
         except Exception as e:
             st.error(f"Could not read file: {e}")
 
@@ -389,8 +408,7 @@ st.markdown(
     '<div class="hero-title">UnifyMat<span>National Material Master</span></div>'
     '<div class="hero-sub">One Nation · One Material Code — AI harmonization of material '
     'masters across Central Public Sector Enterprises</div>'
-    '</div><div class="hero-right">SIH 26099 · Smart Automation<br>'
-    'Ministry of Petroleum &amp; Natural Gas · CPCL</div></div>',
+    '</div></div>',
     unsafe_allow_html=True)
 
 tab_over, tab_review, tab_lookup, tab_master, tab_audit = st.tabs(
