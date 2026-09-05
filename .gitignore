@@ -26,3 +26,4 @@ scratch/
 
 # Local-only project documentation (never push)
 PROJECT_DOCUMENTATION.txt
+DEMO_SCRIPT.md
