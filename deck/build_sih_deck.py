@@ -151,7 +151,6 @@ for _, tf in iter_tf(s1.shapes):
         "PS Category- Software/Hardware": "PS Category- Software",
         "Team Name (Registered on portal)":
             f"Team Name (Registered on portal)- {TEAM_NAME}",
-        # Team ID- left as-is until the portal assigns one
     }
     changed = False
     for p in tf.paragraphs:
@@ -160,6 +159,10 @@ for _, tf in iter_tf(s1.shapes):
             replace_para(p, vals[key])
             changed = True
     if changed:
+        # Team ID gets no line at all: nothing to fill until the portal
+        # assigns one, and a dangling label looks unfinished
+        for p in [p for p in tf.paragraphs if _norm(p.text) == "Team ID-"]:
+            p._p.getparent().remove(p._p)
         # template uses line_spacing 2.0 + justify — the filled block
         # (PS title wraps to 3 lines) would overflow past the slide bottom
         for p in tf.paragraphs:
