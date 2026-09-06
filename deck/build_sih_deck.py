@@ -30,6 +30,8 @@ TINT = RGBColor(0xEA, 0xF1, 0xF9)      # light chip fill
 DARK = RGBColor(0x1F, 0x29, 0x37)
 FONT = "Arial"
 
+TEAM_NAME = "Hawkeye"
+
 prs = Presentation(SRC)
 
 
@@ -147,12 +149,22 @@ for _, tf in iter_tf(s1.shapes):
         "Problem Statement Title-": "Problem Statement Title- AI-Driven Standardization and Harmonization of Material Codes Across CPSEs",
         "Theme-": "Theme- Smart Automation",
         "PS Category- Software/Hardware": "PS Category- Software",
-        # Team ID- / Team Name left as-is for the student to fill
+        "Team Name (Registered on portal)":
+            f"Team Name (Registered on portal)- {TEAM_NAME}",
+        # Team ID- left as-is until the portal assigns one
     }
+    changed = False
     for p in tf.paragraphs:
         key = _norm(p.text)
         if key in vals:
             replace_para(p, vals[key])
+            changed = True
+    if changed:
+        # template uses line_spacing 2.0 + justify — the filled block
+        # (PS title wraps to 3 lines) would overflow past the slide bottom
+        for p in tf.paragraphs:
+            p.line_spacing = 1.1
+            p.alignment = PP_ALIGN.LEFT
 
 # ------------------------------------------------------------------ S2 idea + solution
 s2 = prs.slides[1]
@@ -302,6 +314,21 @@ for i, ref in enumerate(refs):
     r2.font.name = FONT
     r2.font.size = Pt(18)
     r2.font.color.rgb = DARK
+
+# ------------------------------------------------------------------ team badge (S2-S6)
+for sl in list(prs.slides)[1:6]:
+    replace_texts(sl, {"Your Team Name": TEAM_NAME})
+    # badge is an ELLIPSE: PowerPoint lays text out in the inscribed rect
+    # (~w/√2 − margins ≈ 0.77" at w=1.37"), so even 18pt "Hawkeye" (~1.03")
+    # wrapped mid-word. Widen the shape so the inscribed rect fits one line.
+    for sh, tf in iter_tf(sl.shapes):
+        if tf.text.strip() == TEAM_NAME:
+            sh.width = Inches(2.0)
+            for p in tf.paragraphs:
+                for r in p.runs:
+                    r.font.size = Pt(18)
+                    r.font.bold = True
+                    r.font.name = FONT
 
 # ------------------------------------------------------------------ delete instructions slide
 sld = list(prs.slides._sldIdLst)[6]
