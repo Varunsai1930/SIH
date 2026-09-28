@@ -59,7 +59,7 @@ Swiss layout, no decoration). Four tabs:
 CPSE's name, click Ingest — the file is stored in `data/raw/`, the pipeline
 re-harmonizes immediately, and all numbers/tables update. Verified
 end-to-end with a 5th CPSE (GAIL, 15 records): 403 records from 5 CPSEs,
-267 codes, all 15 records matched into shared clusters, still precision
+263 codes, all 15 records matched into shared clusters, still precision
 1.000 / 0 trap violations.
 
 ## Results (current run, on 403 records / 5 CPSEs incl. live GAIL upload)
@@ -71,14 +71,14 @@ end-to-end with a 5th CPSE (GAIL, 15 records): 403 records from 5 CPSEs,
 | Trap violations (auto AND final) | **0** | near-miss materials (8.8 vs 10.9 bolt) NEVER wrongly merged — not even by an officer |
 | Cross-CPSE materials merged | 67/105 (63.8%) auto | rest recoverable via review |
 | **Recall of the final registry** | **36.8% measured** (89.7% projected) | governance workflow moves the number, not just promises |
-| Review queue | 155 items (152 pending) | the human-in-the-loop story the PS demands |
+| Review queue | 155 items (151 pending) | the human-in-the-loop story the PS demands |
 | Demand-aggregation | 68 shared materials, ~12.8% avg price spread | the savings pitch |
 
 Accuracy metrics are computed on the 388 ground-truth-labeled benchmark
 records; the 15 uploaded GAIL records run in production mode (excluded from
 scoring) — demonstrating real-world ingest. The **final-registry**
 metrics are recomputed after officer merges are applied, so the
-human-governance workflow's effect on recall (0.357 → 0.368 with 3
+human-governance workflow's effect on recall (0.357 → 0.368 with 4
 approvals live, climbing as officers work the queue) is measured, not
 asserted.
 
@@ -126,7 +126,7 @@ legacy-code mapping + audit trail.
 | File | Demo use |
 |---|---|
 | `unified_master.csv` | the unified catalog — show NMC + standardized desc + which CPSEs share it + price spread |
-| `code_mapping.csv` | traceability: every legacy CPSE code → its NMC (388/388 mapped) |
+| `code_mapping.csv` | traceability: every legacy CPSE code → its NMC (403/403 mapped) |
 | `review_queue.csv` | governance: ambiguous records + top AI candidates + decision column (officer approves/rejects) |
 | `rejected_pairs.csv` | THE DEMO MOMENT: near-misses caught by veto, e.g. butterfly vs ball valve at 0.71 similarity, rejected on 4 conflicting attributes |
 | `audit_log.csv` | every cluster creation logged — audit trail requirement |

@@ -27,6 +27,8 @@ import csv
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -34,14 +36,36 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 APP = ROOT / "src" / "app.py"
 DECISIONS = ROOT / "outputs" / "review_decisions.csv"
+QUEUE = ROOT / "outputs" / "review_queue.csv"
+
+
+def blocked_count():
+    """Approvals the hard-attribute veto refused: still APPROVED in the
+    decisions file, but marked BLOCKED on the queue row and kept pending."""
+    if not QUEUE.exists():
+        return 0
+    with open(QUEUE, newline="", encoding="utf-8") as f:
+        return sum(1 for row in csv.DictReader(f)
+                   if "BLOCKED" in str(row.get("decision", "")))
 
 
 def approved_count():
+    """Effective approvals, mirroring the dashboard: recorded APPROVED
+    decisions minus veto-blocked ones (which merged nothing)."""
     if not DECISIONS.exists():
         return 0
     with open(DECISIONS, newline="", encoding="utf-8") as f:
-        return sum(1 for row in csv.DictReader(f)
-                   if row.get("decision") == "APPROVED")
+        recorded = sum(1 for row in csv.DictReader(f)
+                       if row.get("decision") == "APPROVED")
+    return recorded - blocked_count()
+
+
+def _as_frame(v):
+    """AppTest dataframe value -> DataFrame (unwraps pandas Styler)."""
+    if isinstance(v, pd.DataFrame):
+        return v
+    data = getattr(v, "data", None)
+    return data if isinstance(data, pd.DataFrame) else None
 
 
 def main():
@@ -102,6 +126,20 @@ def main():
     tables = [str(df.value) for df in at.dataframe]
     check("OFFICER_MERGED visible in audit tables",
           any("OFFICER_MERGED" in t for t in tables))
+
+    # (6b) catalog price columns stay numeric --------------------------------
+    # a "—" placeholder mixed into a float column flips it to object dtype
+    # and pyarrow infers double -> ArrowInvalid -> Streamlit silently falls
+    # back to a text table. Guard the defect class directly on dtypes.
+    price_frames = [_as_frame(df.value) for df in at.dataframe]
+    price_frames = [f for f in price_frames
+                    if f is not None and "Min ₹" in f.columns]
+    mixed = sorted({f"{c}" for f in price_frames for c in ("Avg ₹", "Min ₹", "Max ₹")
+                    if c in f.columns and f[c].dtype == object})
+    check("catalog price columns numeric (no mixed-dtype Arrow breakage)",
+          price_frames and not mixed,
+          f"no catalog table rendered" if not price_frames
+          else f"object-dtype columns: {mixed}")
 
     # (7) rerun stability ----------------------------------------------------
     at.run()

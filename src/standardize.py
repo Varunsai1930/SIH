@@ -55,6 +55,26 @@ def _as_list(v):
     return v if isinstance(v, (list, tuple)) else [v]
 
 
+def parse_rate(v):
+    """last_rate_inr -> float, or None when missing/unparseable.
+
+    ERP extracts are dirty: a rate cell can hold 'N/A', '-', a thousands-
+    separated '1,250.50', or whitespace. The pipeline must treat those
+    as *missing* (no price band), never crash the harmonization run.
+    """
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip().replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def _majority(values):
     """Most common value; ties broken by first appearance."""
     counts = {}
@@ -166,7 +186,8 @@ def build_master(records, multi, singles, cluster_conf):
         # collide onto one NMC, identical clusters never diverge
         nmc = nmc_code(fine_type, merged, uom_std, issue_key=("cluster", tuple(members)))
         cpse_list = sorted({r["cpse"] for r in recs})
-        rates = [float(r.get("last_rate_inr") or 0) for r in recs if r.get("last_rate_inr")]
+        rates = [r for r in (parse_rate(rec.get("last_rate_inr")) for rec in recs)
+                 if r is not None]
         master.append({
             "national_material_code": nmc,
             "standardized_description": desc,

@@ -56,10 +56,34 @@ def parse_candidates(cand_str):
         m = _CAND_RE.match(part.strip())
         if m:
             rows.append({"candidate": m.group(1), "score": float(m.group(2)),
-                         "description": m.group(3)})
+                          "description": m.group(3)})
         elif part.strip():
-            rows.append({"candidate": part.strip(), "score": "", "description": ""})
+            # unparseable fragment (e.g. a legacy description containing
+            # " || "): NaN keeps the score column purely numeric. An ""
+            # placeholder here would flip it to object dtype and break
+            # Arrow serialization of the Review tab's candidate table.
+            rows.append({"candidate": part.strip(), "score": float("nan"),
+                         "description": ""})
     return pd.DataFrame(rows, columns=["candidate", "score", "description"])
+
+
+PRICE_COLS = ("Avg ₹", "Min ₹", "Max ₹")
+
+
+def normalize_price_columns(df, cols=PRICE_COLS):
+    """Coerce price columns to numeric (NaN when missing/unparseable).
+
+    Keeps the frame Arrow-clean: injecting a "—" placeholder string into a
+    float column flips it to object dtype, pyarrow then infers double and
+    raises ArrowInvalid, and Streamlit swallows that into a degraded text
+    fallback — the table silently breaks. Render the returned frame through
+    a Styler with .format(..., na_rep="—") for the visible dash instead.
+    """
+    out = df.copy()
+    for col in cols:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").round(2)
+    return out
 
 # ------------------------------------------------------------------ tokens
 _FONT_SANS = "'Fira Sans', -apple-system, 'Segoe UI', Roboto, sans-serif"
@@ -201,6 +225,16 @@ def preflight_report(df: pd.DataFrame, cpse_name: str) -> str:
         dmed = f"{med:.0f}" if med.is_integer() else f"{med:.1f}"
     junk = None if lens is None else int((lens < 8).sum())
 
+    # non-numeric rates: the pipeline treats them as missing (no crash),
+    # but the officer should know the price band will have gaps
+    rate_col = actual.get("last_rate_inr")
+    if rate_col is None:
+        bad_rates = None
+    else:
+        rate_vals = _clean(df[rate_col])
+        bad_rates = (int(pd.to_numeric(rate_vals, errors="coerce").isna().sum())
+                     if len(rate_vals) else 0)
+
     # raw UOM inventory (values exactly as uploaded, blanks excluded)
     if col["uom"] is None:
         uom_counts = None
@@ -225,6 +259,9 @@ def preflight_report(df: pd.DataFrame, cpse_name: str) -> str:
         problems.append(f"{miss_uom} row(s) missing uom")
     if junk:
         problems.append(f"{junk} description(s) under 8 chars (likely junk)")
+    if bad_rates:
+        problems.append(f"{bad_rates} non-numeric last_rate_inr value(s) "
+                        f"(treated as missing in price bands)")
 
     ready = (not absent) and miss_code == 0 and dup_rows == 0
     if ready:

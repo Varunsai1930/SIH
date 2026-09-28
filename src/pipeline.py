@@ -19,7 +19,7 @@ from pathlib import Path
 
 from normalize import normalize_text, detect_type, extract_attrs, normalize_uom
 from match import match_all, cluster, record_complete, pair_verdict
-from standardize import build_master
+from standardize import build_master, parse_rate
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
@@ -338,8 +338,8 @@ def apply_officer_decisions(records, decisions, master, mapping, audit, review_r
         # merge: re-point the mapping row, retire the old singleton code,
         # grow the target master row (legacy count, sharing CPSEs, price band)
         member_recs = [records[m] for m in members] + [rec]
-        rates = [float(r.get("last_rate_inr") or 0) for r in member_recs
-                 if r.get("last_rate_inr")]
+        rates = [r for r in (parse_rate(rr.get("last_rate_inr")) for rr in member_recs)
+                 if r is not None]
         mrow["num_legacy_codes"] += 1
         cpes = set(mrow["cpses_sharing"].split(","))
         cpes.add(rec["cpse"])
@@ -349,13 +349,39 @@ def apply_officer_decisions(records, decisions, master, mapping, audit, review_r
         mrow["max_rate_inr"] = max(rates) if rates else mrow["max_rate_inr"]
         mrow["status"] = "OFFICER_MERGED"
         my_row["national_material_code"] = target_nmc
-        # retire the merged record's now-empty singleton code (a review-kind
-        # record is never auto-merged, so its old code always holds exactly
-        # itself; guard anyway so a multi-member code is never stranded)
+        # the approved record is leaving its old code: retire the code when
+        # nothing still maps to it, otherwise shrink it (count, sharing,
+        # price band) so the master never disagrees with the mapping table.
+        # A retired code is dropped from the lookup too — a later decision
+        # in the same batch resolves it as stale instead of merging into
+        # a code that no longer exists.
         old_row = master_by_nmc.get(old_nmc)
-        if old_row is not None and old_row["num_legacy_codes"] == 1:
-            master[:] = [m for m in master
-                         if m["national_material_code"] != old_nmc]
+        if old_row is not None:
+            still_there = [m for m in maps_by_nmc.get(old_nmc, [])
+                           if m is not my_row
+                           and m["national_material_code"] == old_nmc]
+            if not still_there:
+                master[:] = [m for m in master
+                             if m["national_material_code"] != old_nmc]
+                del master_by_nmc[old_nmc]
+            else:
+                rem_recs = [records[idx[(m["cpse"], m["legacy_material_code"])]]
+                            for m in still_there
+                            if (m["cpse"], m["legacy_material_code"]) in idx]
+                old_row["num_legacy_codes"] = len(still_there)
+                cpses = sorted({r["cpse"] for r in rem_recs}) or \
+                    sorted({m["cpse"] for m in still_there})
+                old_row["cpses_sharing"] = ",".join(cpses)
+                rrates = [r for r in (parse_rate(rr.get("last_rate_inr"))
+                                      for rr in rem_recs) if r is not None]
+                if rrates:
+                    old_row["avg_rate_inr"] = round(sum(rrates) / len(rrates), 2)
+                    old_row["min_rate_inr"] = min(rrates)
+                    old_row["max_rate_inr"] = max(rrates)
+                audit.append({"national_material_code": old_nmc,
+                              "action": "OFFICER_SPLIT",
+                              "members": len(still_there), "confidence": 1.0,
+                              "auto": False, "timestamp": d.get("timestamp", "")})
         audit.append({"national_material_code": target_nmc,
                       "action": "OFFICER_MERGED", "members": len(member_recs),
                       "confidence": 1.0, "auto": False,

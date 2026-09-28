@@ -13,8 +13,10 @@ match" explainability rely on:
                          (ui_widgets.parse_candidates — shared source) and
                          resolve to real records (10 sample "Matched on"
                          lines printed as a UI preview)
-  bundle["master"]      non-empty national_material_code on every entry
-  bundle["mapping"]      exactly one mapping row per ingested record
+   bundle["master"]      non-empty national_material_code on every entry
+   bundle["mapping"]      exactly one mapping row per ingested record
+   registry integrity     NMCs unique; every mapping points at a live master
+                          code; num_legacy_codes matches the mapping rows
 
 Note on review-row kinds (real contract, see pipeline.build_review_rows):
 kind="record" rows are record-addressable; kind="cluster" rows are keyed by
@@ -176,6 +178,35 @@ def main():
           f"{len(records)} records)",
           len(mapping) == len(records),
           f"mismatch: {len(mapping)} mappings vs {len(records)} records")
+
+    # (g) registry integrity: master <-> mapping consistency ---------------
+    # an officer approval that moves a record out of a multi-member code
+    # must shrink that code — these checks catch a stale num_legacy_codes,
+    # a mapping that points at a retired code, or a duplicated NMC.
+    nmcs = [m.get("national_material_code", "") for m in master]
+    dupes = sorted({n for n in nmcs if nmcs.count(n) > 1})
+    check(f"national codes unique across master ({len(master)} entries)",
+          not dupes, f"duplicate NMCs: {dupes[:3]}")
+    master_set = set(nmcs)
+    orphans = sorted({row["national_material_code"] for row in mapping
+                      if row["national_material_code"] not in master_set})
+    check("every mapping row points at a live master code",
+          not orphans, f"orphan NMCs: {orphans[:3]}")
+    per_nmc = Counter(row["national_material_code"] for row in mapping)
+    bad_counts = [
+        f"{m['national_material_code']} says {m['num_legacy_codes']} "
+        f"but has {per_nmc.get(m['national_material_code'], 0)} mapping row(s)"
+        for m in master
+        if m["num_legacy_codes"] != per_nmc.get(m["national_material_code"], 0)]
+    check("num_legacy_codes matches mapping rows for every NMC",
+          not bad_counts, "; ".join(bad_counts[:3]))
+    per_rec = Counter((row["cpse"], row["legacy_material_code"]) for row in mapping)
+    rec_keys = [(r["cpse"], r["material_code"]) for r in records]
+    multi_mapped = sorted(str(k) for k, c in per_rec.items() if c > 1)
+    unmapped = sorted(str(k) for k in set(rec_keys) - set(per_rec))
+    check("every record maps to exactly one NMC",
+          not multi_mapped and not unmapped,
+          f"multi-mapped: {multi_mapped[:3]} unmapped: {unmapped[:3]}")
 
     # summary ----------------------------------------------------------------
     n_pass = sum(1 for _, ok, _ in results if ok)

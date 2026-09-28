@@ -27,7 +27,7 @@ sys.path.insert(0, str(SRC))
 from normalize import MIN_ATTRS, VETO_ATTRS  # noqa: E402
 from pipeline import (run_pipeline, REQUIRED_COLS, guard_formula_cell,  # noqa: E402
                      shared_materials, price_spreads, row_spread)
-from ui_widgets import confidence_ring, preflight_report, parse_candidates  # noqa: E402
+from ui_widgets import confidence_ring, preflight_report, parse_candidates, normalize_price_columns  # noqa: E402
 
 st.set_page_config(page_title="UnifyMat · National Material Master",
                    layout="wide", initial_sidebar_state="expanded")
@@ -184,8 +184,14 @@ def append_decision(officer, kind, cpse, code, decision, nmc):
 def safe_csv_bytes(df):
     """CSV download bytes with the same Excel-formula guard as outputs/."""
     guarded = df.copy()
-    for col in guarded.select_dtypes(include="object"):
-        guarded[col] = guarded[col].map(guard_formula_cell)
+    # dtype-agnostic: pandas 3 infers string columns as `str` dtype rather
+    # than `object`, and select_dtypes(include="object") will stop matching
+    # them once the back-compat shim is removed — an isinstance check keeps
+    # the injection guard covering every string cell on any pandas version.
+    for col in guarded.columns:
+        s = guarded[col]
+        if s.dtype == object or isinstance(s.dtype, pd.StringDtype):
+            guarded[col] = s.map(guard_formula_cell)
     return guarded.to_csv(index=False).encode("utf-8")
 
 
@@ -332,9 +338,11 @@ decision_key = {(str(r.cpse), str(r.material_code)): r.decision
 with st.sidebar:
     st.markdown("### Data")
     files_df = pd.DataFrame(
-        [{"file": k, "records": v["rows"]} for k, v in B["ingest_report"].items()])
-    st.dataframe(files_df.rename(columns={"file": "Source file", "records": "Records"}),
-                 hide_index=True, height=min(38 + 35 * len(files_df), 220), use_container_width=True)
+        [{"file": k, "records": v["rows"], "skipped": v["skipped"]}
+         for k, v in B["ingest_report"].items()])
+    st.dataframe(files_df.rename(columns={"file": "Source file", "records": "Records",
+                                           "skipped": "Skipped (blank code/description)"}),
+                 hide_index=True, height=min(38 + 35 * len(files_df), 220), width="stretch")
 
     st.markdown("##### Upload a CPSE material master")
     up = st.file_uploader("CSV with columns: " + ", ".join(REQUIRED_COLS), type="csv",
@@ -382,7 +390,7 @@ with st.sidebar:
                         st.markdown(st.session_state.preflight_html, unsafe_allow_html=True)
                 else:
                     st.success(f"Valid file — {len(df)} records ready to ingest.")
-                    if st.button("Ingest file", type="primary", use_container_width=True):
+                    if st.button("Ingest file", type="primary", width="stretch"):
                         slug = re.sub(r"[^a-z0-9]+", "", cpse_name.lower().strip()) or "upload"
                         dest = RAW / f"{slug}_materials.csv"
                         # an exact-name re-upload refreshes that CPSE's extract;
@@ -401,15 +409,30 @@ with st.sidebar:
                                 df["cpse"] = cpse_name.strip().upper()
                             else:
                                 df.insert(0, "cpse", cpse_name.strip().upper())
+                            # the new extract replaces the file BEFORE the pipeline
+                            # re-runs: if harmonization itself blows up on the new
+                            # data, restore the previous file (or remove a
+                            # brand-new one) so one bad upload cannot brick
+                            # every later session.
+                            backup = dest.read_bytes() if dest.exists() else None
                             df.to_csv(dest, index=False)
-                            with st.spinner("Harmonizing with new data…"):
-                                st.session_state.bundle = run_pipeline()
-                            st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
-                            st.rerun()
+                            try:
+                                with st.spinner("Harmonizing with new data…"):
+                                    st.session_state.bundle = run_pipeline()
+                            except Exception as e:
+                                if backup is None:
+                                    dest.unlink(missing_ok=True)
+                                else:
+                                    dest.write_bytes(backup)
+                                st.error(f"Harmonization failed on the uploaded file: {e} "
+                                         f"— previous extract restored.")
+                            else:
+                                st.toast(f"Ingested {len(df)} records from {cpse_name.upper()}")
+                                st.rerun()
         except Exception as e:
             st.error(f"Could not read file: {e}")
 
-    if st.button("Re-run harmonization", use_container_width=True):
+    if st.button("Re-run harmonization", width="stretch"):
         with st.spinner("Harmonizing…"):
             st.session_state.bundle = run_pipeline()
         st.rerun()
@@ -479,7 +502,8 @@ with tab_over:
     chips_html = "".join(
         f'<span class="chip {chip_cls.get(k, "unique")}">{v} {k.lower()}</span>'
         for k, v in status_counts.most_common())
-    verdict = ("Benchmark evaluation: precision 100% with zero near-miss merges."
+    verdict = (f"Benchmark evaluation: precision {metrics['precision'] * 100:.0f}% "
+               f"with zero near-miss merges."
                if metrics["has_ground_truth"] and metrics["trap_violations"] == 0
                else "Uploaded records without labels are excluded from accuracy metrics."
                if metrics["has_ground_truth"] else
@@ -492,11 +516,11 @@ with tab_over:
     ex[0].download_button("Download unified master (CSV)",
                           data=safe_csv_bytes(pd.DataFrame(master)),
                           file_name="unified_master.csv", mime="text/csv",
-                          use_container_width=True)
+                          width="stretch")
     ex[1].download_button("Download code mapping (CSV)",
                           data=safe_csv_bytes(pd.DataFrame(mapping)),
                           file_name="code_mapping.csv", mime="text/csv",
-                          use_container_width=True)
+                          width="stretch")
     st.caption("Also written to outputs/ by every pipeline run.")
 
     # pre-flight report for the most recent sidebar upload (dismissable)
@@ -518,7 +542,7 @@ with tab_over:
     cc = st.columns(2)
     with cc[0]:
         st.plotly_chart(bar_fig(cats, counts, "#1E40AF", [str(v) for v in counts]),
-                        use_container_width=True,
+                        width="stretch",
                         config={"displayModeBar": False})
         st.caption("Legacy records by category, after AI classification")
     with cc[1]:
@@ -527,7 +551,7 @@ with tab_over:
                       else s["standardized_description"] for s, _ in top_spread]
             vals = [round(p * 100, 1) for _, p in top_spread]
             st.plotly_chart(bar_fig(labels, vals, "#D97706", [f"{v}%" for v in vals]),
-                            use_container_width=True,
+                            width="stretch",
                             config={"displayModeBar": False})
             st.caption("Price spread on materials shared across CPSEs — the demand-aggregation opportunity")
 
@@ -552,8 +576,13 @@ with tab_review:
                "Every decision is logged.")
 
     k = st.columns(3)
+    # a veto-blocked approval stays in Pending (it merged nothing), so the
+    # Approved metric counts effective merges, not recorded clicks
+    blocked_n = sum(1 for _, s in pending if s == "BLOCKED")
+    approved_n = (int((decisions["decision"] == "APPROVED").sum())
+                  if len(decisions) else 0) - blocked_n
     k[0].metric("Pending", len(pending))
-    k[1].metric("Approved", int((decisions["decision"] == "APPROVED").sum()) if len(decisions) else 0)
+    k[1].metric("Approved", approved_n)
     k[2].metric("Rejected", int((decisions["decision"] == "REJECTED").sum()) if len(decisions) else 0)
 
     st.download_button("Download review queue (CSV)",
@@ -587,7 +616,7 @@ with tab_review:
             styled = (cand_df.style.map(styler_candidate_color,
                                         subset=["Candidate (best first)"])
                       .hide(axis="index"))
-            st.dataframe(styled, hide_index=True, use_container_width=True,
+            st.dataframe(styled, hide_index=True, width="stretch",
                          height=min(38 + 35 * len(cands), 150))
             if len(cands):  # confidence ring per candidate (same order, max 5)
                 ring_html = " ".join(
@@ -614,8 +643,16 @@ with tab_review:
                                        else "Why this match — no shared identity attributes")
             st.markdown(f'<div class="result"><span class="nmc">{html.escape(str(row["suggested_nmc"]))}</span>'
                         f'<span class="chip prov">SUGGESTED</span></div>', unsafe_allow_html=True)
+            if row.get("kind") != "record":
+                # low-confidence cluster rows are informational: officer
+                # Approve/Reject applies to individual records only, and the
+                # pipeline ignores non-record decisions — offering the buttons
+                # here would confirm a merge that never happens.
+                st.info("Cluster-level merges are not officer-actionable — "
+                        "review the member records individually.")
+                continue
             b = st.columns(2)
-            if b[0].button("Approve", key=f"ap_{i}", type="primary", use_container_width=True):
+            if b[0].button("Approve", key=f"ap_{i}", type="primary", width="stretch"):
                 append_decision(officer, row["kind"], row["cpse"], row["material_code"],
                                 "APPROVED", row["suggested_nmc"])
                 with st.spinner("Merging into the confirmed code — veto-checked…"):
@@ -623,7 +660,7 @@ with tab_review:
                 st.toast(f"Approved {row['cpse']}/{row['material_code']} — merged into "
                          f"{row['suggested_nmc']}")
                 st.rerun()
-            if b[1].button("Reject", key=f"rj_{i}", use_container_width=True):
+            if b[1].button("Reject", key=f"rj_{i}", width="stretch"):
                 append_decision(officer, row["kind"], row["cpse"], row["material_code"],
                                 "REJECTED", row["suggested_nmc"])
                 with st.spinner("Registry updated — record stands alone under its own code…"):
@@ -635,7 +672,7 @@ with tab_review:
         st.markdown("<h3 class='section'>Officer decisions</h3>", unsafe_allow_html=True)
         dd = decisions[["timestamp", "officer", "cpse", "material_code", "decision", "suggested_nmc"]]
         dd = dd.iloc[::-1]
-        st.dataframe(dd, hide_index=True, use_container_width=True, height=260)
+        st.dataframe(dd, hide_index=True, width="stretch", height=260)
 
 # ---------------------------------------------------------------- Code Lookup
 with tab_lookup:
@@ -673,7 +710,7 @@ with tab_lookup:
     if picks:
         pc = st.columns(len(picks))
         for col, (why, code) in zip(pc, picks):
-            if col.button(f"{code}", help=why, use_container_width=True):
+            if col.button(f"{code}", help=why, width="stretch"):
                 st.session_state["_next_lookup"] = code
                 st.rerun()
         st.caption(" · ".join(f"**{c}** — {w}" for w, c in picks))
@@ -692,7 +729,7 @@ with tab_lookup:
                 try:
                     if (mrow["max_rate_inr"] and mrow["min_rate_inr"]
                             and str(mrow["max_rate_inr"]) != str(mrow["min_rate_inr"])):
-                        price_bit = (f" · ₹{mrow['min_rate_inr']}–₹{mrow['max_rate_inr']}"
+                        price_bit = (f" · ₹{mrow['min_rate_inr']:g}–₹{mrow['max_rate_inr']:g}"
                                      " across CPSEs")
                 except Exception:
                     pass
@@ -719,7 +756,7 @@ with tab_lookup:
                          .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
                               subset=["Legacy code"])
                          .hide(axis="index"))
-            st.dataframe(eq_styled, hide_index=True, use_container_width=True,
+            st.dataframe(eq_styled, hide_index=True, width="stretch",
                          height=min(38 + 35 * len(eq), 240))
 
 # ---------------------------------------------------------------- Master Catalog
@@ -796,14 +833,16 @@ with tab_master:
     if mdf.empty:
         st.info("No codes match the current search and filters.")
     else:
-        for col in ("Avg ₹", "Min ₹", "Max ₹"):
-            mdf[col] = pd.to_numeric(mdf[col], errors="coerce").round(2)
-            mdf[col] = mdf[col].where(pd.notna(mdf[col]), "—")
+        # numeric price frame (NaN = missing) keeps Arrow serialization
+        # clean; the Styler's na_rep renders the designed "—" dash.
+        mdf = normalize_price_columns(mdf)
         m_styled = (mdf.style
+                    .format("{:.2f}", subset=[c for c in ("Avg ₹", "Min ₹", "Max ₹")
+                                              if c in mdf.columns], na_rep="—")
                     .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
                          subset=["National Material Code"])
                     .hide(axis="index"))
-        st.dataframe(m_styled, hide_index=True, use_container_width=True,
+        st.dataframe(m_styled, hide_index=True, width="stretch",
                      height=min(38 + 35 * len(mdf), 480))
         st.download_button("Download filtered catalog (CSV)",
                            data=safe_csv_bytes(mdf),
@@ -826,7 +865,7 @@ with tab_master:
                       .map(lambda _: "font-family: 'Fira Code', ui-monospace, monospace",
                            subset=["NMC"])
                       .hide(axis="index"))
-        st.dataframe(sdf_styled, hide_index=True, use_container_width=True,
+        st.dataframe(sdf_styled, hide_index=True, width="stretch",
                      height=min(38 + 35 * len(sdf), 480))
         st.caption("Top 5 by price spread in the current filter — the same material bought "
                    "at different prices across CPSEs.")
@@ -844,7 +883,7 @@ with tab_audit:
         st.markdown("**Officer decisions (persistent)**")
         st.dataframe(decisions[["timestamp", "officer", "cpse", "material_code",
                                 "decision", "suggested_nmc"]].iloc[::-1],
-                     hide_index=True, use_container_width=True, height=240)
+                     hide_index=True, width="stretch", height=240)
     else:
         st.caption("No officer decisions recorded yet — approve or reject items in the Review Queue.")
     st.markdown("**Machine actions (current run)**")
@@ -859,4 +898,4 @@ with tab_audit:
                                       "timestamp": "Timestamp"})
         audit["Auto"] = audit.get("Auto", True)
         st.dataframe(audit[["Timestamp", "National code", "Action", "Members", "Confidence"]],
-                     hide_index=True, use_container_width=True, height=320)
+                     hide_index=True, width="stretch", height=320)
